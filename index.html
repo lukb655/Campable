@@ -133,9 +133,17 @@ const Auth = {
           onUser(null);
         }
       }, 8000);
-      auth.onAuthStateChanged(u => {
+      auth.onAuthStateChanged(async u => {
         if (!resolved) { resolved = true; clearTimeout(timeout); }
         try {
+          // If Firebase returns a user with no email, it's a leftover anonymous
+          // session from an older version of this app. Sign it out and show login.
+          if (u && !u.email) {
+            await auth.signOut();
+            this.current = null;
+            onUser(null);
+            return;
+          }
           this.current = u ? {id:u.uid, email:u.email||"", name:(u.displayName||(u.email?u.email.split("@")[0]:"Camper"))} : null;
           onUser(this.current);
         } catch(e) {
@@ -146,10 +154,12 @@ const Auth = {
       });
       return;
     }
-    // Local fallback — synchronous, never hangs
+    // Local fallback — synchronous, never hangs.
+    // Require both a valid session ID and a user record with a real name.
     const s=lread(LK.session,null);
     const users=lread(LK.users,{});
-    this.current = s && users[s] ? {id:s, email:users[s].email, name:users[s].name} : null;
+    const found = s && users[s] && users[s].name && users[s].email ? users[s] : null;
+    this.current = found ? {id:s, email:found.email, name:found.name} : null;
     onUser(this.current);
   },
   async signUp(email,password,name){
@@ -531,29 +541,54 @@ function Home({trips,me,flash,onOpen}){
 }
 
 function AllTripsMap({trips,onOpen}){
+  // Default: collapsed on narrow screens (mobile), expanded on wide
+  const [open,setOpen]=useState(()=>window.innerWidth>=600);
   const ref=useRef(null);
   const pts=trips.filter(t=>t.campLat&&t.campLng);
+
   useEffect(()=>{
-    if(!ref.current) return;
+    if(!open||!ref.current) return;
     const center=pts.length?[+pts[0].campLat,+pts[0].campLng]:[39.5,-98.35];
     const map=L.map(ref.current,{attributionControl:false}).setView(center,pts.length?5:3);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
     const bounds=[];
     pts.forEach(t=>{
-      const m=L.marker([+t.campLat,+t.campLng]).addTo(map)
+      L.marker([+t.campLat,+t.campLng]).addTo(map)
         .bindPopup(`<b>${t.name}</b><br>${t.location||""}<br>${fmt(t.start)}`);
-      m.on("click",()=>{});
       bounds.push([+t.campLat,+t.campLng]);
     });
     if(bounds.length>1) map.fitBounds(L.latLngBounds(bounds).pad(0.35));
-    setTimeout(()=>map.invalidateSize(),120);
+    setTimeout(()=>map.invalidateSize(),150);
     return ()=>map.remove();
-  },[trips.map(t=>t.id+t.campLat+t.campLng).join()]);
+  },[open, trips.map(t=>t.id+t.campLat+t.campLng).join()]);
+
   return (
-    <div style={{marginBottom:24}}>
-      <div style={St.mapHead}><Ic.map style={{...ic(14),color:"var(--ember2)"}}/> All campsites</div>
-      <div ref={ref} style={St.mapHome}/>
-      {pts.length===0 && <div style={St.hintSm}>Add campsite coordinates to a trip and it'll drop onto this map.</div>}
+    <div style={{marginBottom:20,background:"var(--pine)",border:"1px solid var(--line)",borderRadius:14,overflow:"hidden"}}>
+      <button
+        onClick={()=>setOpen(o=>!o)}
+        style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+          width:"100%",background:"none",border:"none",color:"var(--paper)",
+          padding:"12px 14px",cursor:"pointer",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <Ic.map style={{...ic(15),color:"var(--ember2)"}}/>
+          <span style={{fontFamily:"'Oswald',sans-serif",fontWeight:600,fontSize:14,letterSpacing:.5}}>
+            All campsites
+          </span>
+          {pts.length>0 &&
+            <span style={{fontSize:11,background:"var(--moss)",color:"var(--sage)",
+              padding:"2px 8px",borderRadius:6,fontWeight:600}}>
+              {pts.length} pinned
+            </span>}
+        </div>
+        <Ic.chev style={{...ic(16),color:"var(--sage)",
+          transform:open?"rotate(90deg)":"none",transition:"transform .2s"}}/>
+      </button>
+      {open &&
+        <div style={{padding:"0 14px 14px"}}>
+          <div ref={ref} style={St.mapHome}/>
+          {pts.length===0 &&
+            <div style={{...St.hintSm,marginTop:8}}>Add campsite coordinates to a trip and it'll appear here.</div>}
+        </div>}
     </div>
   );
 }
@@ -1308,7 +1343,7 @@ function Contours(){
 const St={
   app:{minHeight:"100dvh",background:"var(--night)",color:"var(--paper)",position:"relative",overflowX:"hidden"},
   contours:{position:"fixed",inset:0,width:"100%",height:"100%",opacity:.05,pointerEvents:"none",zIndex:0},
-  main:{maxWidth:760,margin:"0 auto",padding:"0 18px 90px",position:"relative",zIndex:1},
+  main:{maxWidth:760,margin:"0 auto",padding:"0 18px 90px",position:"relative",zIndex:1,isolation:"isolate"},
 
   header:{position:"sticky",top:0,zIndex:20,maxWidth:760,margin:"0 auto",
     padding:"calc(env(safe-area-inset-top) + 14px) 18px 12px",
@@ -1431,7 +1466,7 @@ const St={
   dangerBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"none",border:"1px solid rgba(217,83,79,.4)",color:"#E78A87",borderRadius:11,padding:"10px 16px",fontSize:13.5,fontWeight:600,cursor:"pointer"},
   iconBtn:{background:"none",border:"none",color:"var(--mist)",cursor:"pointer",display:"grid",placeItems:"center",padding:4},
 
-  overlay:{position:"fixed",inset:0,background:"rgba(8,14,12,.72)",backdropFilter:"blur(3px)",display:"grid",placeItems:"center",zIndex:50,padding:18},
+  overlay:{position:"fixed",inset:0,background:"rgba(8,14,12,.72)",backdropFilter:"blur(3px)",display:"grid",placeItems:"center",zIndex:9999,padding:18},
   modal:{width:"100%",maxWidth:440,background:"var(--pine)",border:"1px solid var(--line)",borderRadius:18,padding:20,maxHeight:"90vh",overflowY:"auto"},
   modalHead:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16},
   modalTitle:{fontFamily:"'Oswald',sans-serif",fontSize:20,fontWeight:600,letterSpacing:.5},
