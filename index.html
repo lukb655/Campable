@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0F1A17" />
+<meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Campable" />
@@ -61,7 +62,7 @@ a{color:inherit}
 <!-- ============================================================= -->
 <script>
 window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCjFu3jgebJ2mcwh1Km_S_pJldhjrdT5tw",
+   apiKey: "AIzaSyCjFu3jgebJ2mcwh1Km_S_pJldhjrdT5tw",
   authDomain: "campable-2b014.firebaseapp.com",
   projectId: "campable-2b014",
   storageBucket: "campable-2b014.firebasestorage.app",
@@ -134,8 +135,14 @@ const Auth = {
       }, 8000);
       auth.onAuthStateChanged(u => {
         if (!resolved) { resolved = true; clearTimeout(timeout); }
-        this.current = u ? {id:u.uid, email:u.email, name:(u.displayName||u.email.split("@")[0])} : null;
-        onUser(this.current);
+        try {
+          this.current = u ? {id:u.uid, email:u.email||"", name:(u.displayName||(u.email?u.email.split("@")[0]:"Camper"))} : null;
+          onUser(this.current);
+        } catch(e) {
+          console.warn("Auth state parse error:", e.message);
+          this.current = null;
+          onUser(null);
+        }
       });
       return;
     }
@@ -163,7 +170,7 @@ const Auth = {
   async signIn(email,password){
     if(HAS_FB){
       const cred=await auth.signInWithEmailAndPassword(email.trim(),password);
-      this.current={id:cred.user.uid,email:cred.user.email,name:(cred.user.displayName||email.split("@")[0])};
+      this.current={id:cred.user.uid,email:cred.user.email||email.trim(),name:(cred.user.displayName||(email?email.split("@")[0]:"Camper"))};
       return this.current;
     }
     const users=lread(LK.users,{});
