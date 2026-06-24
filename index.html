@@ -12,8 +12,10 @@
 <title>Campable — shared camping plans</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- Non-blocking font load — page renders immediately with fallback fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" onload="this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"></noscript>
 
 <style>
 :root{
@@ -48,9 +50,9 @@ a{color:inherit}
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" onerror="window._FB_LOAD_ERR=true"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onerror="window._FB_LOAD_ERR=true"></script>
+<script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" onerror="window._FB_LOAD_ERR=true"></script>
 
 <!-- ============================================================= -->
 <!--  PASTE YOUR FIREBASE CONFIG HERE (see SETUP-GUIDE).            -->
@@ -82,13 +84,24 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
    DATA LAYER — Firebase (email/password + Firestore) if config
    present, else a local-device fallback that mimics the same API.
    ============================================================ */
-const HAS_FB = !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId);
-let db=null, auth=null;
-if(HAS_FB){
-  firebase.initializeApp(window.FIREBASE_CONFIG);
-  db=firebase.firestore();
-  auth=firebase.auth();
-  try{ auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+// HAS_FB is true only when: config has a projectId AND the Firebase scripts
+// actually loaded (no network error) AND initialization succeeds.
+let HAS_FB = false;
+let db = null, auth = null;
+try {
+  const cfg = window.FIREBASE_CONFIG || {};
+  if (cfg.projectId && typeof firebase !== "undefined" && !window._FB_LOAD_ERR) {
+    firebase.initializeApp(cfg);
+    db   = firebase.firestore();
+    auth = firebase.auth();
+    // setPersistence keeps the user logged in across browser restarts.
+    // "local" is a plain string on the compat SDK — not a constant path.
+    auth.setPersistence("local").catch(() => {});
+    HAS_FB = true;
+  }
+} catch (e) {
+  console.warn("Firebase init failed — running in local mode.", e.message);
+  db = null; auth = null; HAS_FB = false;
 }
 
 const uid=()=>Math.random().toString(36).slice(2,10);
@@ -109,12 +122,24 @@ const Auth = {
   current:null,
   async init(onUser){
     if(HAS_FB){
-      auth.onAuthStateChanged(u=>{
+      // Safety net: if Firebase auth doesn't respond within 8 seconds,
+      // fall back to treating the user as logged out rather than hanging.
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          console.warn("Firebase auth timed out — showing login screen.");
+          onUser(null);
+        }
+      }, 8000);
+      auth.onAuthStateChanged(u => {
+        if (!resolved) { resolved = true; clearTimeout(timeout); }
         this.current = u ? {id:u.uid, email:u.email, name:(u.displayName||u.email.split("@")[0])} : null;
         onUser(this.current);
       });
       return;
     }
+    // Local fallback — synchronous, never hangs
     const s=lread(LK.session,null);
     const users=lread(LK.users,{});
     this.current = s && users[s] ? {id:s, email:users[s].email, name:users[s].name} : null;
@@ -424,11 +449,18 @@ function Header({me,mode,onProfile}){
   );
 }
 function Splash(){
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 6000); return () => clearTimeout(t); }, []);
   return <div style={{...St.app,display:"grid",placeItems:"center"}}>
     <Contours/>
-    <div style={{textAlign:"center"}}>
+    <div style={{textAlign:"center",padding:24}}>
       <Ic.tent style={{width:40,height:40,color:"var(--ember)"}} className="spin"/>
       <div style={{...St.brand,marginTop:12}}>CAMP<span style={{color:"var(--ember)"}}>ABLE</span></div>
+      {slow &&
+        <div style={{marginTop:20,color:"var(--sage)",fontSize:13,lineHeight:1.6,maxWidth:280}}>
+          <p style={{margin:"0 0 12px"}}>Taking longer than expected. This usually means the Firebase scripts are slow to load on your network.</p>
+          <button style={St.ghostBtn} onClick={() => window.location.reload()}>Reload</button>
+        </div>}
     </div>
   </div>;
 }
