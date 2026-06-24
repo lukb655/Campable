@@ -53,6 +53,7 @@ a{color:inherit}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
 <!-- ============================================================= -->
 <!--  ⬇⬇⬇  PASTE YOUR FIREBASE CONFIG HERE (see SETUP-GUIDE)  ⬇⬇⬇   -->
@@ -86,11 +87,12 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
    Same API surface either way so the UI never branches.
    ============================================================ */
 const HAS_FB = !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId);
-let db = null, auth = null;
+let db = null, auth = null, storage = null;
 if (HAS_FB) {
   firebase.initializeApp(window.FIREBASE_CONFIG);
   db = firebase.firestore();
   auth = firebase.auth();
+  storage = firebase.storage();
 }
 
 const uid = () => Math.random().toString(36).slice(2,10);
@@ -118,7 +120,10 @@ const Data = {
     if(!HAS_FB) return this.myId();
     return new Promise((res)=>{
       auth.onAuthStateChanged(u=>{ if(u) res(u.uid); });
-      auth.signInAnonymously().catch(e=>console.error(e));
+      auth.signInAnonymously().catch(e=>{
+        console.error("Firebase anonymous auth failed (is it enabled in your console?):", e);
+        res(this.myId()); // fall back to a local ID so the app loads
+      });
     });
   },
   // subscribe to all trips this device participates in
@@ -136,7 +141,7 @@ const Data = {
     return db.collection("trips").where("memberIds","array-contains",myId)
       .onSnapshot(snap=>{
         cb(snap.docs.map(d=>({id:d.id, ...d.data()})));
-      }, err=>console.error(err));
+      }, err=>{ console.error("Firestore error (check security rules):", err); cb([]); });
   },
   async createTrip(trip){
     const full = { ...trip, code: code6(), createdAt: Date.now() };
@@ -160,6 +165,20 @@ const Data = {
     await db.collection("trips").doc(id).delete();
   },
   // join a trip by code → returns trip or null
+  async uploadPhoto(tripId, file){
+    if(!HAS_FB){
+      // local mode: read into a data URL so it shows inline
+      return new Promise((res, rej)=>{
+        const reader = new FileReader();
+        reader.onload = e => res(e.target.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+    }
+    const ref = storage.ref(`trips/${tripId}/${uid()}_${file.name}`);
+    await ref.put(file);
+    return await ref.getDownloadURL();
+  },
   async joinByCode(myId, myName, codeInput){
     const code = codeInput.trim().toUpperCase();
     if(!HAS_FB){
@@ -456,6 +475,7 @@ function TripDetail({trip, me, flash, onBack}){
     {id:"map",label:"Map",icon:Ic.map},
     {id:"crew",label:"Crew",icon:Ic.users},
     {id:"split",label:"Who owes",icon:Ic.dollar},
+    {id:"photos",label:"Photos",icon:Ic.img},
   ];
 
   return (
@@ -486,6 +506,7 @@ function TripDetail({trip, me, flash, onBack}){
       {tab==="map" && <MapTab trip={trip} patch={patch} flash={flash}/>}
       {tab==="crew" && <CrewTab trip={trip} patch={patch} flash={flash}/>}
       {tab==="split" && <SplitTab trip={trip}/>}
+      {tab==="photos" && <PhotosTab trip={trip} me={me} patch={patch} flash={flash}/>}
     </div>
   );
 }
@@ -498,6 +519,7 @@ function OverviewTab({trip, me, patch, flash, onBack}){
     ["Meals planned",(trip.meals||[]).length>=1],
     ["Trails mapped",(trip.trails||[]).length>=1],
     ["Cover photo",!!trip.cover],
+    ["Photos added",(trip.photos||[]).length>=1],
   ];
   const pct=Math.round(tasks.filter(t=>t[1]).length/tasks.length*100);
   const isOwner = trip.ownerId===me.id;
@@ -578,13 +600,27 @@ function ShareCard({trip, flash}){
 
 function CoverEditor({trip,patch,flash}){
   const [url,setUrl]=useState(trip.cover||"");
+  const [uploading,setUploading]=useState(false);
+  const handleUpload=async(e)=>{
+    const file=e.target.files?.[0]; if(!file) return;
+    setUploading(true);
+    try{
+      const newUrl=await Data.uploadPhoto(trip.id, file);
+      setUrl(newUrl); patch({cover:newUrl}); flash("Cover updated");
+    }catch(err){ console.error(err); flash("Upload failed"); }
+    finally{ setUploading(false); e.target.value=""; }
+  };
   return (
     <div style={St.block}>
       <div style={St.blockHead}><span>Cover photo</span><Ic.img style={{...ic(13),color:"var(--sage)"}}/></div>
-      <div style={{display:"flex",gap:8}}>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>
         <input style={St.input} placeholder="Paste an image URL" value={url} onChange={e=>setUrl(e.target.value)}/>
         <button style={St.smallBtn} onClick={()=>{patch({cover:url.trim()});flash("Cover updated");}}>Set</button>
       </div>
+      <label style={{...St.smallBtn,cursor:"pointer",fontSize:12}}>
+        <Ic.img style={ic(13)}/> {uploading?"Uploading…":"Upload file"}
+        <input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} disabled={uploading}/>
+      </label>
     </div>
   );
 }
@@ -766,6 +802,56 @@ function CrewTab({trip,patch,flash}){
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ---------------- PHOTOS ---------------- */
+function PhotosTab({trip, me, patch, flash}){
+  const [uploading,setUploading]=useState(false);
+  const photos=trip.photos||[];
+
+  const handleUpload=async(e)=>{
+    const files=Array.from(e.target.files||[]); if(!files.length) return;
+    setUploading(true);
+    try{
+      const urls=await Promise.all(files.map(f=>Data.uploadPhoto(trip.id, f)));
+      const newPhotos=urls.map(url=>({id:uid(),url,uploadedBy:me.id,uploadedAt:Date.now()}));
+      patch({photos:[...photos,...newPhotos]});
+      flash(`${newPhotos.length} photo${newPhotos.length>1?"s":""} added`);
+    }catch(err){ console.error(err); flash("Upload failed"); }
+    finally{ setUploading(false); e.target.value=""; }
+  };
+
+  const del=(id)=>{ if(!confirm("Remove this photo?")) return; patch({photos:photos.filter(p=>p.id!==id)}); };
+  const setAsCover=(url)=>{ patch({cover:url}); flash("Cover updated"); };
+
+  return (
+    <div style={St.pane}>
+      <ListHead title="Trip photos"/>
+      <label style={{...St.smallBtn,cursor:"pointer",marginBottom:14,display:"inline-flex"}}>
+        <Ic.img style={ic(14)}/> {uploading?"Uploading…":"Add photos"}
+        <input type="file" accept="image/*" multiple style={{display:"none"}} onChange={handleUpload} disabled={uploading}/>
+      </label>
+      {photos.length===0 && <Empty icon={Ic.img} text="No photos yet. Tap 'Add photos' to share shots from the trip."/>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
+        {photos.map(p=>(
+          <div key={p.id} style={{position:"relative",borderRadius:12,overflow:"hidden",border:"1px solid var(--line)",aspectRatio:"1",background:"var(--moss)"}}>
+            <img src={p.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+            <div style={{position:"absolute",top:6,right:6,display:"flex",gap:4}}>
+              <button title="Set as cover" onClick={()=>setAsCover(p.url)}
+                style={{width:26,height:26,background:"rgba(15,26,23,.85)",border:"none",borderRadius:6,color:"var(--gold)",cursor:"pointer",display:"grid",placeItems:"center"}}>
+                <Ic.img style={ic(13)}/>
+              </button>
+              <button title="Delete" onClick={()=>del(p.id)}
+                style={{width:26,height:26,background:"rgba(15,26,23,.85)",border:"none",borderRadius:6,color:"var(--mist)",cursor:"pointer",display:"grid",placeItems:"center"}}>
+                <Ic.trash style={ic(13)}/>
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {photos.length>0 && <div style={St.hintSm}>Tap the image icon to set a photo as the trip cover.</div>}
     </div>
   );
 }
