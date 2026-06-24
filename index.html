@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#0F1A17" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="TrailLog" />
+<meta name="apple-mobile-web-app-title" content="Campable" />
 <link rel="apple-touch-icon" href="icon-180.png" />
 <link rel="manifest" href="manifest.json" />
-<title>TrailLog — shared camping plans</title>
+<title>Campable — shared camping plans</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -43,38 +43,33 @@ a{color:inherit}
 <body>
 <div id="root"></div>
 
-<!-- React + Babel (standalone build so this single file just opens) -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- Firebase (compat build — simplest to drop in) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 
 <!-- ============================================================= -->
-<!--  ⬇⬇⬇  PASTE YOUR FIREBASE CONFIG HERE (see SETUP-GUIDE)  ⬇⬇⬇   -->
-<!--  Until you do, the app runs in LOCAL DEMO mode on this device. -->
+<!--  PASTE YOUR FIREBASE CONFIG HERE (see SETUP-GUIDE).            -->
+<!--  Until you do, the app runs in LOCAL DEMO mode (accounts and   -->
+<!--  trips stay on this one device).                               -->
 <!-- ============================================================= -->
 <script>
 window.FIREBASE_CONFIG = {
-apiKey: "AIzaSyCjFu3jgebJ2mcwh1Km_S_pJldhjrdT5tw",
-  authDomain: "campable-2b014.firebaseapp.com",
-  projectId: "campable-2b014",
-  storageBucket: "campable-2b014.firebasestorage.app",
-  messagingSenderId: "38258867267",
-  appId: "1:38258867267:web:d0d58c9251e1eaf73ea8f6",
-  measurementId: "G-8QJBF3JNPF"
+  // apiKey: "...",
+  // authDomain: "...",
+  // projectId: "...",
+  // storageBucket: "...",
+  // messagingSenderId: "...",
+  // appId: "..."
 };
 </script>
 <!-- ============================================================= -->
 
 <script>
-  // Force Babel's CLASSIC runtime (React.createElement) so the transformed
-  // code has no ES "import" statements — those break inside a plain <script>.
   Babel.registerPreset("react-classic", {
     presets: [[Babel.availablePresets["react"], { runtime: "classic" }]],
   });
@@ -83,155 +78,187 @@ apiKey: "AIzaSyCjFu3jgebJ2mcwh1Km_S_pJldhjrdT5tw",
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 /* ============================================================
-   DATA LAYER — Firebase if configured, else local-device demo.
-   Same API surface either way so the UI never branches.
+   DATA LAYER — Firebase (email/password + Firestore) if config
+   present, else a local-device fallback that mimics the same API.
    ============================================================ */
 const HAS_FB = !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId);
-let db = null, auth = null, storage = null;
-if (HAS_FB) {
+let db=null, auth=null;
+if(HAS_FB){
   firebase.initializeApp(window.FIREBASE_CONFIG);
-  db = firebase.firestore();
-  auth = firebase.auth();
-  storage = firebase.storage();
+  db=firebase.firestore();
+  auth=firebase.auth();
+  try{ auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
 }
 
-const uid = () => Math.random().toString(36).slice(2,10);
-const code6 = () => {
-  const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({length:6},()=>a[Math.floor(Math.random()*a.length)]).join("");
-};
+const uid=()=>Math.random().toString(36).slice(2,10);
+const code6=()=>{const a="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";return Array.from({length:6},()=>a[Math.floor(Math.random()*a.length)]).join("");};
 
-/* ---- LOCAL demo store (mirrors Firestore behaviour) ---- */
-const LKEY = "traillog:trips:v2";
-const LMEMBER = "traillog:me:v2";
-function localReadAll(){ try{ return JSON.parse(localStorage.getItem(LKEY)||"{}"); }catch{ return {}; } }
-function localWriteAll(o){ localStorage.setItem(LKEY, JSON.stringify(o)); }
-const localSubs = new Set();
-function localPing(){ localSubs.forEach(fn=>fn(localReadAll())); }
+/* ---------- local fallback (account-based, stored on device) ---------- */
+const LK={users:"campable:users",session:"campable:session",trips:"campable:trips"};
+function lread(k,d){try{return JSON.parse(localStorage.getItem(k))??d;}catch{return d;}}
+function lwrite(k,v){localStorage.setItem(k,JSON.stringify(v));}
+const localSubs=new Set();
+function localPing(){const all=lread(LK.trips,{});localSubs.forEach(fn=>fn(all));}
 
-/* ---- unified API ---- */
-const Data = {
-  myId(){
-    let m = localStorage.getItem(LMEMBER);
-    if(!m){ m = uid(); localStorage.setItem(LMEMBER, m); }
-    return m;
-  },
-  async ensureAuth(){
-    if(!HAS_FB) return this.myId();
-    return new Promise((res)=>{
-      auth.onAuthStateChanged(u=>{ if(u) res(u.uid); });
-      auth.signInAnonymously().catch(e=>{
-        console.error("Firebase anonymous auth failed (is it enabled in your console?):", e);
-        res(this.myId()); // fall back to a local ID so the app loads
+/* simple non-cryptographic hash for the LOCAL fallback only.
+   (Real security comes from Firebase Auth when configured.) */
+function weakHash(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return String(h);}
+
+const Auth = {
+  current:null,
+  async init(onUser){
+    if(HAS_FB){
+      auth.onAuthStateChanged(u=>{
+        this.current = u ? {id:u.uid, email:u.email, name:(u.displayName||u.email.split("@")[0])} : null;
+        onUser(this.current);
       });
-    });
-  },
-  // subscribe to all trips this device participates in
-  subscribeTrips(myId, joinedCodes, cb){
-    if(!HAS_FB){
-      const fn = (all)=>{
-        const list = Object.values(all).filter(t =>
-          t.ownerId===myId || (joinedCodes||[]).includes(t.code));
-        cb(list);
-      };
-      localSubs.add(fn); fn(localReadAll());
-      return ()=>localSubs.delete(fn);
-    }
-    // Firestore: trips where member array contains myId
-    return db.collection("trips").where("memberIds","array-contains",myId)
-      .onSnapshot(snap=>{
-        cb(snap.docs.map(d=>({id:d.id, ...d.data()})));
-      }, err=>{ console.error("Firestore error (check security rules):", err); cb([]); });
-  },
-  async createTrip(trip){
-    const full = { ...trip, code: code6(), createdAt: Date.now() };
-    if(!HAS_FB){
-      const all = localReadAll(); full.id = uid();
-      all[full.id]=full; localWriteAll(all); localPing(); return full;
-    }
-    full.memberIds = [trip.ownerId];
-    const ref = await db.collection("trips").add(full);
-    return { id: ref.id, ...full };
-  },
-  async updateTrip(id, patch){
-    if(!HAS_FB){
-      const all = localReadAll(); if(all[id]){ all[id]={...all[id],...patch}; localWriteAll(all); localPing(); }
       return;
     }
-    await db.collection("trips").doc(id).update(patch);
+    const s=lread(LK.session,null);
+    const users=lread(LK.users,{});
+    this.current = s && users[s] ? {id:s, email:users[s].email, name:users[s].name} : null;
+    onUser(this.current);
   },
-  async deleteTrip(id){
-    if(!HAS_FB){ const all=localReadAll(); delete all[id]; localWriteAll(all); localPing(); return; }
-    await db.collection("trips").doc(id).delete();
-  },
-  // join a trip by code → returns trip or null
-  async uploadPhoto(tripId, file){
-    if(!HAS_FB){
-      // local mode: read into a data URL so it shows inline
-      return new Promise((res, rej)=>{
-        const reader = new FileReader();
-        reader.onload = e => res(e.target.result);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
+  async signUp(email,password,name){
+    if(HAS_FB){
+      const cred=await auth.createUserWithEmailAndPassword(email.trim(),password);
+      await cred.user.updateProfile({displayName:name});
+      this.current={id:cred.user.uid,email:email.trim(),name};
+      return this.current;
     }
-    const ref = storage.ref(`trips/${tripId}/${uid()}_${file.name}`);
-    await ref.put(file);
-    return await ref.getDownloadURL();
+    const users=lread(LK.users,{});
+    const key=email.trim().toLowerCase();
+    if(Object.values(users).some(u=>u.email===key)) throw new Error("That email already has an account.");
+    const id=uid();
+    users[id]={email:key,name,pass:weakHash(password)};
+    lwrite(LK.users,users); lwrite(LK.session,id);
+    this.current={id,email:key,name}; return this.current;
   },
-  async joinByCode(myId, myName, codeInput){
-    const code = codeInput.trim().toUpperCase();
-    if(!HAS_FB){
-      const all = localReadAll();
-      const t = Object.values(all).find(x=>x.code===code);
-      if(!t) return null;
-      t.members = t.members||[];
-      if(!t.members.some(m=>m.id===myId)) t.members.push({id:myId,name:myName||"Guest"});
-      all[t.id]=t; localWriteAll(all); localPing();
-      return t;
+  async signIn(email,password){
+    if(HAS_FB){
+      const cred=await auth.signInWithEmailAndPassword(email.trim(),password);
+      this.current={id:cred.user.uid,email:cred.user.email,name:(cred.user.displayName||email.split("@")[0])};
+      return this.current;
     }
-    const q = await db.collection("trips").where("code","==",code).limit(1).get();
-    if(q.empty) return null;
-    const doc = q.docs[0];
-    const t = doc.data();
-    const members = t.members||[];
-    const memberIds = t.memberIds||[];
-    if(!members.some(m=>m.id===myId)) members.push({id:myId,name:myName||"Guest"});
-    if(!memberIds.includes(myId)) memberIds.push(myId);
-    await doc.ref.update({members, memberIds});
-    return {id:doc.id, ...t, members, memberIds};
+    const users=lread(LK.users,{});
+    const key=email.trim().toLowerCase();
+    const entry=Object.entries(users).find(([,u])=>u.email===key);
+    if(!entry||entry[1].pass!==weakHash(password)) throw new Error("Wrong email or password.");
+    lwrite(LK.session,entry[0]);
+    this.current={id:entry[0],email:key,name:entry[1].name}; return this.current;
+  },
+  async signOut(){
+    if(HAS_FB){ await auth.signOut(); this.current=null; return; }
+    localStorage.removeItem(LK.session); this.current=null;
   }
 };
 
-/* ============================================================
-   SEED (local demo only, first run)
-   ============================================================ */
-function seedIfEmpty(myId, myName){
-  if(HAS_FB) return;
-  const all = localReadAll();
-  if(Object.keys(all).length) return;
-  const id = uid();
-  all[id] = {
-    id, ownerId: myId, code: code6(), createdAt: Date.now(),
-    name:"Dolly Sods Overlander", location:"Dolly Sods Wilderness, WV",
-    start:"2026-09-18", end:"2026-09-21", cover:"",
-    notes:"Ridge camp, dark-sky photography, bring the 270 awning.",
-    members:[{id:myId,name:myName||"You"},{id:uid(),name:"Sam"}],
-    meals:[
-      {id:uid(),day:"Fri",title:"Foil-pack steak & potatoes",cost:38,paidBy:myId,forAll:true},
-      {id:uid(),day:"Sat",title:"Dutch-oven chili",cost:24,paidBy:"",forAll:true},
-    ],
-    trails:[
-      {id:uid(),name:"Bear Rocks Loop",miles:4.2,difficulty:"Moderate",lat:39.0476,lng:-79.3074,done:false},
-    ],
-  };
-  localWriteAll(all);
+const Data = {
+  subscribeTrips(myId, cb){
+    if(!HAS_FB){
+      const fn=(all)=>cb(Object.values(all).filter(t=>(t.memberIds||[]).includes(myId)));
+      localSubs.add(fn); fn(lread(LK.trips,{}));
+      return ()=>localSubs.delete(fn);
+    }
+    return db.collection("trips").where("memberIds","array-contains",myId)
+      .onSnapshot(s=>cb(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.error(e));
+  },
+  async createTrip(t){
+    const full={...t, code:code6(), createdAt:Date.now()};
+    if(!HAS_FB){ const all=lread(LK.trips,{}); full.id=uid(); all[full.id]=full; lwrite(LK.trips,all); localPing(); return full; }
+    const ref=await db.collection("trips").add(full); return {id:ref.id,...full};
+  },
+  async updateTrip(id,patch){
+    if(!HAS_FB){ const all=lread(LK.trips,{}); if(all[id]){all[id]={...all[id],...patch};lwrite(LK.trips,all);localPing();} return; }
+    await db.collection("trips").doc(id).update(patch);
+  },
+  async deleteTrip(id){
+    if(!HAS_FB){ const all=lread(LK.trips,{}); delete all[id]; lwrite(LK.trips,all); localPing(); return; }
+    await db.collection("trips").doc(id).delete();
+  },
+  async joinByCode(me, codeInput){
+    const code=codeInput.trim().toUpperCase();
+    if(!HAS_FB){
+      const all=lread(LK.trips,{}); const t=Object.values(all).find(x=>x.code===code); if(!t)return null;
+      t.members=t.members||[]; t.memberIds=t.memberIds||[];
+      if(!t.memberIds.includes(me.id)){t.members.push(blankMember(me));t.memberIds.push(me.id);}
+      all[t.id]=t; lwrite(LK.trips,all); localPing(); return t;
+    }
+    const q=await db.collection("trips").where("code","==",code).limit(1).get();
+    if(q.empty)return null;
+    const doc=q.docs[0], t=doc.data();
+    const members=t.members||[], memberIds=t.memberIds||[];
+    if(!memberIds.includes(me.id)){members.push(blankMember(me));memberIds.push(me.id);}
+    await doc.ref.update({members,memberIds});
+    return {id:doc.id,...t,members,memberIds};
+  }
+};
+
+const blankMember=(me)=>({id:me.id,name:me.name,email:me.email||"",emergency:"",photo:""});
+
+/* ---------- image handling: compress to fast, small data URL ---------- */
+function fileToCompressedDataURL(file, maxDim=1200, quality=0.72){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error("Couldn't read that file."));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error("That file isn't a valid image."));
+      img.onload=()=>{
+        let{width:w,height:h}=img;
+        if(w>h && w>maxDim){h=Math.round(h*maxDim/w);w=maxDim;}
+        else if(h>=w && h>maxDim){w=Math.round(w*maxDim/h);h=maxDim;}
+        const c=document.createElement("canvas");c.width=w;c.height=h;
+        c.getContext("2d").drawImage(img,0,0,w,h);
+        resolve(c.toDataURL("image/jpeg",quality));
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------- maps directions (Apple on iOS, else Google) ---------- */
+const isIOS=()=>/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+function directionsURL(lat,lng,label){
+  const q=encodeURIComponent(label||"Campsite");
+  return isIOS()
+    ? `https://maps.apple.com/?daddr=${lat},${lng}&q=${q}`
+    : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 }
 
 /* ============================================================
-   ICONS (inline SVG — no dependency)
+   SEED (local fallback, first trip for a new account)
    ============================================================ */
-const Ic = {
+function seedFor(me){
+  if(HAS_FB) return;
+  const all=lread(LK.trips,{});
+  if(Object.values(all).some(t=>(t.memberIds||[]).includes(me.id))) return;
+  const id=uid();
+  all[id]={
+    id, ownerId:me.id, code:code6(), createdAt:Date.now(),
+    name:"Dolly Sods Overlander", location:"Dolly Sods Wilderness, WV",
+    start:"2026-09-18", end:"2026-09-21", cover:"",
+    campLat:39.0476, campLng:-79.3074, campLabel:"Bear Rocks dispersed site",
+    notes:"Ridge camp, dark-sky photography, bring the 270 awning.",
+    memberIds:[me.id],
+    members:[{...blankMember(me), emergency:"Sam — (555) 014-2231"}],
+    meals:[
+      {id:uid(),day:"Fri",title:"Foil-pack steak & potatoes",responsible:me.id,
+        items:[{id:uid(),name:"Ribeye steak",qty:"2 lb",got:false},{id:uid(),name:"Baby potatoes",qty:"1 bag",got:false},{id:uid(),name:"Foil",qty:"1 roll",got:false}],
+        cost:38,paidBy:me.id,forAll:true},
+    ],
+    trails:[{id:uid(),name:"Bear Rocks Loop",miles:4.2,difficulty:"Moderate",lat:39.0489,lng:-79.3010,done:false}],
+    photos:[],
+  };
+  lwrite(LK.trips,all);
+}
+
+/* ============================================================
+   ICONS
+   ============================================================ */
+const Ic={
+  tent:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 21 14 3M21 21 10.5 3M12 13.5 18 21M12 13.5 6 21M2 21h20"/></svg>,
   mtn:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m8 3 4 8 5-5 5 15H2L8 3z"/></svg>,
   plus:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>,
   x:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>,
@@ -253,92 +280,143 @@ const Ic = {
   map:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 3-6 3v15l6-3 6 3 6-3V3l-6 3-6-3zM9 3v15M15 6v15"/></svg>,
   edit:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>,
   cloud:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.5 1.5A4 4 0 0 0 6 19h11.5z"/></svg>,
-  phone:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>,
+  phone:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  cart:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 2-1.58l1.65-7.42H5.12"/></svg>,
+  logout:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>,
+  sos:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7v6c0 5 3.8 8.5 10 11 6.2-2.5 10-6 10-11V7L12 2z"/><path d="M12 8v4M12 16h.01"/></svg>,
 };
+const ic=(n)=>({width:n,height:n,flexShrink:0});
+const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
 
 /* ============================================================
-   APP
+   APP ROOT
    ============================================================ */
 function App(){
-  const [me, setMe] = useState({ id:null, name: localStorage.getItem("traillog:name")||"" });
-  const [trips, setTrips] = useState(null);
-  const [route, setRoute] = useState({name:"trips"});
-  const [toast, setToast] = useState(null);
-  const [joinedCodes, setJoinedCodes] = useState(()=>{
-    try{ return JSON.parse(localStorage.getItem("traillog:joined")||"[]"); }catch{ return []; }
-  });
+  const [me,setMe]=useState(undefined);   // undefined=loading, null=logged out
+  const [trips,setTrips]=useState(null);
+  const [route,setRoute]=useState({name:"trips"});
+  const [toast,setToast]=useState(null);
+  const flash=useCallback(m=>{setToast(m);setTimeout(()=>setToast(null),2400);},[]);
 
-  const flash = useCallback((m)=>{ setToast(m); setTimeout(()=>setToast(null),2400); },[]);
-
-  // auth + initial subscribe
-  useEffect(()=>{(async()=>{
-    const id = await Data.ensureAuth();
-    seedIfEmpty(id, me.name);
-    setMe(m=>({...m,id}));
-  })();},[]);
+  useEffect(()=>{ Auth.init(u=>{ setMe(u); if(u){seedFor(u);} else setTrips(null); }); },[]);
 
   useEffect(()=>{
-    if(!me.id) return;
-    const unsub = Data.subscribeTrips(me.id, joinedCodes, (list)=>{
+    if(!me){return;}
+    const unsub=Data.subscribeTrips(me.id,list=>{
       list.sort((a,b)=>(a.start||"9999").localeCompare(b.start||"9999"));
       setTrips(list);
     });
     return ()=>unsub&&unsub();
-  },[me.id, joinedCodes]);
+  },[me]);
 
-  const saveName = (n)=>{ setMe(m=>({...m,name:n})); localStorage.setItem("traillog:name",n); };
-
-  const rememberCode = (code)=>{
-    setJoinedCodes(prev=>{
-      if(prev.includes(code)) return prev;
-      const next=[...prev,code]; localStorage.setItem("traillog:joined",JSON.stringify(next)); return next;
-    });
-  };
-
-  if(!me.id || trips===null) return <Splash/>;
-  if(!me.name) return <NameGate onSet={saveName}/>;
+  if(me===undefined) return <Splash/>;
+  if(me===null) return <AuthScreen onAuthed={u=>setMe(u)} flash={flash}/>;
+  if(trips===null) return <Splash/>;
 
   const current = route.name==="trip" ? trips.find(t=>t.id===route.id) : null;
 
   return (
     <div style={St.app}>
       <Contours/>
-      <Header me={me} mode={HAS_FB?"live":"local"} onProfile={()=>setRoute({name:"me"})}/>
-      <main style={St.main}>
+      {route.name!=="trip" &&
+        <Header me={me} mode={HAS_FB?"live":"local"} onProfile={()=>setRoute({name:"me"})}/>}
+      <main style={{...St.main, ...(route.name==="trip"?{padding:"0 0 0",maxWidth:"none"}:{})}}>
         {route.name==="trips" &&
-          <TripList trips={trips} me={me} flash={flash}
-            onOpen={id=>setRoute({name:"trip",id})}
-            onJoin={code=>rememberCode(code)} />}
+          <Home trips={trips} me={me} flash={flash}
+            onOpen={id=>setRoute({name:"trip",id})}/>}
         {route.name==="trip" && current &&
-          <TripDetail trip={current} me={me} flash={flash}
-            onBack={()=>setRoute({name:"trips"})} />}
+          <TripShell trip={current} me={me} flash={flash} onBack={()=>setRoute({name:"trips"})}/>}
         {route.name==="trip" && !current &&
-          <div style={St.pane}><Empty icon={Ic.mtn} text="This trip is no longer available."/>
+          <div style={{...St.main}}><Empty icon={Ic.mtn} text="This trip is no longer available."/>
             <button style={St.primaryBtn} onClick={()=>setRoute({name:"trips"})}>Back to trips</button></div>}
         {route.name==="me" &&
-          <Profile me={me} onName={saveName} mode={HAS_FB?"live":"local"} onBack={()=>setRoute({name:"trips"})}/>}
+          <Profile me={me} mode={HAS_FB?"live":"local"} onBack={()=>setRoute({name:"trips"})}
+            onSignOut={async()=>{await Auth.signOut();setMe(null);setRoute({name:"trips"});}}/>}
       </main>
       {toast && <div style={St.toast} className="fade"><Ic.check style={{width:15,height:15,color:"var(--gold)"}}/> {toast}</div>}
     </div>
   );
 }
-// inline styles use the string "var(--token)" directly
 
 /* ============================================================
-   HEADER / SPLASH / GATE
+   AUTH (email + password)
    ============================================================ */
-function Header({me, mode, onProfile}){
+function AuthScreen({onAuthed, flash}){
+  const [mode,setMode]=useState("up"); // up | in — new users land on sign-up
+  const [email,setEmail]=useState(""); const [pass,setPass]=useState(""); const [name,setName]=useState("");
+  const [busy,setBusy]=useState(false); const [err,setErr]=useState("");
+
+  const go=async()=>{
+    setErr(""); setBusy(true);
+    try{
+      if(mode==="up"){
+        if(!name.trim()) throw new Error("Add your name so the crew knows who you are.");
+        if(pass.length<6) throw new Error("Use at least 6 characters for your password.");
+        const u=await Auth.signUp(email,pass,name.trim());
+        seedFor(u); onAuthed(u);
+      }else{
+        const u=await Auth.signIn(email,pass); onAuthed(u);
+      }
+    }catch(e){ setErr(e.message||"Something went wrong."); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{...St.app,display:"grid",placeItems:"center",padding:24}}>
+      <Contours/>
+      <div style={{...St.card2,maxWidth:380,width:"100%",padding:28}} className="fade">
+        <div style={{textAlign:"center",marginBottom:18}}>
+          <div style={{...St.logoMark,margin:"0 auto 14px",width:52,height:52}}>
+            <Ic.tent style={{width:26,height:26,color:"var(--night)"}}/>
+          </div>
+          <div style={{...St.brand,fontSize:26}}>CAMP<span style={{color:"var(--ember)"}}>ABLE</span></div>
+          <p style={{...St.sub,marginTop:6}}>{mode==="up"?"Make an account so your trips follow you to any phone.":"Welcome back. Sign in to your trips."}</p>
+        </div>
+        {mode==="up" &&
+          <Field label="Your name"><input style={St.input} value={name} autoFocus
+            placeholder="Luke" onChange={e=>setName(e.target.value)}/></Field>}
+        <Field label="Email"><input style={St.input} type="email" value={email} autoComplete="email"
+          placeholder="you@example.com" onChange={e=>setEmail(e.target.value)}/></Field>
+        <Field label="Password"><input style={St.input} type="password" value={pass}
+          autoComplete={mode==="up"?"new-password":"current-password"}
+          placeholder="••••••" onChange={e=>setPass(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&go()}/></Field>
+        {err && <div style={St.errText}>{err}</div>}
+        <button style={{...St.primaryBtn,width:"100%",justifyContent:"center",marginTop:8,opacity:busy?.6:1}}
+          disabled={busy} onClick={go}>
+          {busy ? <Ic.tent style={{...ic(16)}} className="spin"/> : (mode==="up"?"Create account":"Sign in")}
+        </button>
+        <div style={{textAlign:"center",marginTop:16,fontSize:13,color:"var(--sage)"}}>
+          {mode==="up" ? "Already have an account? " : "New here? "}
+          <button style={St.linkBtn} onClick={()=>{setErr("");setMode(mode==="up"?"in":"up");}}>
+            {mode==="up"?"Sign in":"Create one"}
+          </button>
+        </div>
+        {!HAS_FB &&
+          <div style={St.localBanner}>
+            <Ic.phone style={{...ic(13),color:"var(--gold)"}}/>
+            Demo mode: accounts live on this device only. Add Firebase keys (setup guide) for real cross-phone login.
+          </div>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   HEADER / SPLASH
+   ============================================================ */
+function Header({me,mode,onProfile}){
   return (
     <header style={St.header}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <div style={St.logoMark}><Ic.mtn style={{width:20,height:20,color:"var(--night)"}}/></div>
+        <div style={St.logoMark}><Ic.tent style={{width:20,height:20,color:"var(--night)"}}/></div>
         <div>
-          <div style={St.brand}>TRAIL<span style={{color:"var(--ember)"}}>LOG</span></div>
+          <div style={St.brand}>CAMP<span style={{color:"var(--ember)"}}>ABLE</span></div>
           <div style={St.tagline}>plan · pack · go together</div>
         </div>
       </div>
       <button style={St.profileBtn} onClick={onProfile}>
-        <span style={{...St.modeDot, background: mode==="live"?"#5BBF8A":"var(--gold)"}}/>
+        <span style={{...St.modeDot,background:mode==="live"?"#5BBF8A":"var(--gold)"}}/>
         <span style={St.avatarSm}>{(me.name||"?").slice(0,1).toUpperCase()}</span>
       </button>
     </header>
@@ -348,69 +426,43 @@ function Splash(){
   return <div style={{...St.app,display:"grid",placeItems:"center"}}>
     <Contours/>
     <div style={{textAlign:"center"}}>
-      <Ic.mtn style={{width:40,height:40,color:"var(--ember)"}} className="spin"/>
-      <div style={{...St.brand,marginTop:12}}>TRAIL<span style={{color:"var(--ember)"}}>LOG</span></div>
-      <div style={St.tagline}>loading your trips…</div>
-    </div>
-  </div>;
-}
-function NameGate({onSet}){
-  const [n,setN]=useState("");
-  return <div style={{...St.app,display:"grid",placeItems:"center",padding:24}}>
-    <Contours/>
-    <div style={{...St.card2,maxWidth:380,width:"100%",textAlign:"center",padding:28}} className="fade">
-      <div style={{...St.logoMark,margin:"0 auto 16px",width:52,height:52}}>
-        <Ic.mtn style={{width:26,height:26,color:"var(--night)"}}/>
-      </div>
-      <h1 style={{...St.h1,fontSize:26}}>Welcome to TrailLog</h1>
-      <p style={St.sub}>What should the crew call you? This name shows up next to the meals you cover and the trips you plan.</p>
-      <input style={{...St.input,marginTop:16,textAlign:"center"}} placeholder="Your name"
-        value={n} autoFocus onChange={e=>setN(e.target.value)}
-        onKeyDown={e=>e.key==="Enter"&&n.trim()&&onSet(n.trim())}/>
-      <button style={{...St.primaryBtn,width:"100%",justifyContent:"center",marginTop:14}}
-        disabled={!n.trim()} onClick={()=>n.trim()&&onSet(n.trim())}>Start planning</button>
+      <Ic.tent style={{width:40,height:40,color:"var(--ember)"}} className="spin"/>
+      <div style={{...St.brand,marginTop:12}}>CAMP<span style={{color:"var(--ember)"}}>ABLE</span></div>
     </div>
   </div>;
 }
 
 /* ============================================================
-   TRIP LIST
+   HOME — trip list + all-trips map
    ============================================================ */
-function TripList({trips, me, flash, onOpen, onJoin}){
+function Home({trips,me,flash,onOpen}){
   const [adding,setAdding]=useState(false);
   const [joining,setJoining]=useState(false);
 
-  const grouped = useMemo(()=>{
-    const g={};
-    trips.forEach(t=>{ const y=t.start?t.start.slice(0,4):"Unscheduled"; (g[y]=g[y]||[]).push(t); });
-    return g;
+  const grouped=useMemo(()=>{
+    const g={}; trips.forEach(t=>{const y=t.start?t.start.slice(0,4):"Unscheduled";(g[y]=g[y]||[]).push(t);}); return g;
   },[trips]);
 
-  const addTrip = async (d)=>{
+  const addTrip=async(d)=>{
     await Data.createTrip({
-      ownerId:me.id, name:d.name, location:d.location, start:d.start, end:d.end,
-      cover:d.cover||"", notes:"",
-      members:[{id:me.id,name:me.name}], meals:[], trails:[],
+      ownerId:me.id, name:d.name, location:d.location, start:d.start, end:d.end, cover:"",
+      campLat:d.campLat?+d.campLat:null, campLng:d.campLng?+d.campLng:null, campLabel:d.campLabel||"",
+      notes:"", memberIds:[me.id], members:[blankMember(me)], meals:[], trails:[], photos:[],
     });
-    flash("Trip created");
-    setAdding(false);
+    flash("Trip created"); setAdding(false);
   };
-
-  const join = async (codeInput)=>{
-    const t = await Data.joinByCode(me.id, me.name, codeInput);
-    if(!t){ flash("No trip with that code"); return false; }
-    onJoin(t.code);
-    flash(`Joined ${t.name}`);
-    setJoining(false);
-    return true;
+  const join=async(c)=>{
+    const t=await Data.joinByCode(me,c);
+    if(!t){flash("No trip with that code");return false;}
+    flash(`Joined ${t.name}`); setJoining(false); return true;
   };
 
   return (
     <div className="fade">
       <div style={St.sectionHead}>
         <div>
-          <h1 style={St.h1}>Your Expeditions</h1>
-          <p style={St.sub}>{trips.length} {trips.length===1?"trip":"trips"} on the books</p>
+          <h1 style={St.h1}>Your Trips</h1>
+          <p style={St.sub}>{trips.length} {trips.length===1?"trip":"trips"} planned</p>
         </div>
         <div style={{display:"flex",gap:8}}>
           <button style={St.ghostBtn} onClick={()=>setJoining(true)}>Join</button>
@@ -418,11 +470,13 @@ function TripList({trips, me, flash, onOpen, onJoin}){
         </div>
       </div>
 
+      <AllTripsMap trips={trips} onOpen={onOpen}/>
+
       {trips.length===0 &&
-        <Empty icon={Ic.pack} text="No trips yet. Plan one and share its code, or join a friend's with their code."/>}
+        <Empty icon={Ic.pack} text="No trips yet. Plan one and share its code, or join a friend's with theirs."/>}
 
       {Object.keys(grouped).sort().map(year=>(
-        <div key={year} style={{marginBottom:28}}>
+        <div key={year} style={{marginBottom:26}}>
           <div style={St.yearLabel}><span style={St.yearNum}>{year}</span><span style={St.yearLine}/></div>
           <div style={St.tripGrid}>
             {grouped[year].map(t=><TripCard key={t.id} trip={t} onOpen={()=>onOpen(t.id)}/>)}
@@ -436,14 +490,41 @@ function TripList({trips, me, flash, onOpen, onJoin}){
   );
 }
 
+function AllTripsMap({trips,onOpen}){
+  const ref=useRef(null);
+  const pts=trips.filter(t=>t.campLat&&t.campLng);
+  useEffect(()=>{
+    if(!ref.current) return;
+    const center=pts.length?[+pts[0].campLat,+pts[0].campLng]:[39.5,-98.35];
+    const map=L.map(ref.current,{attributionControl:false}).setView(center,pts.length?5:3);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
+    const bounds=[];
+    pts.forEach(t=>{
+      const m=L.marker([+t.campLat,+t.campLng]).addTo(map)
+        .bindPopup(`<b>${t.name}</b><br>${t.location||""}<br>${fmt(t.start)}`);
+      m.on("click",()=>{});
+      bounds.push([+t.campLat,+t.campLng]);
+    });
+    if(bounds.length>1) map.fitBounds(L.latLngBounds(bounds).pad(0.35));
+    setTimeout(()=>map.invalidateSize(),120);
+    return ()=>map.remove();
+  },[trips.map(t=>t.id+t.campLat+t.campLng).join()]);
+  return (
+    <div style={{marginBottom:24}}>
+      <div style={St.mapHead}><Ic.map style={{...ic(14),color:"var(--ember2)"}}/> All campsites</div>
+      <div ref={ref} style={St.mapHome}/>
+      {pts.length===0 && <div style={St.hintSm}>Add campsite coordinates to a trip and it'll drop onto this map.</div>}
+    </div>
+  );
+}
+
 function TripCard({trip,onOpen}){
   const miles=(trip.trails||[]).reduce((a,t)=>a+(+t.miles||0),0);
-  const cost=(trip.meals||[]).reduce((a,m)=>a+(+m.cost||0),0);
   const dateLabel=trip.start?new Date(trip.start+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}):"TBD";
   return (
     <button style={St.card} onClick={onOpen}>
-      <div style={{...St.cardCover, ...(trip.cover?{backgroundImage:`url(${trip.cover})`}:{})}}>
-        {!trip.cover && <Ic.mtn style={{width:30,height:30,color:"var(--mist)",opacity:.7}}/>}
+      <div style={{...St.cardCover,...(trip.cover?{backgroundImage:`url(${trip.cover})`}:{})}}>
+        {!trip.cover && <Ic.tent style={{width:30,height:30,color:"var(--mist)",opacity:.7}}/>}
         <div style={St.coverGrad}/>
         <div style={St.cardDate}>{dateLabel}</div>
       </div>
@@ -453,7 +534,7 @@ function TripCard({trip,onOpen}){
         <div style={St.cardStats}>
           <span><Ic.foot style={ic(12)}/> {miles.toFixed(1)}mi</span>
           <span><Ic.users style={ic(12)}/> {(trip.members||[]).length}</span>
-          <span><Ic.dollar style={ic(12)}/> {cost.toFixed(0)}</span>
+          <span><Ic.img style={ic(12)}/> {(trip.photos||[]).length}</span>
         </div>
       </div>
       <Ic.chev style={{...ic(18),...St.cardArrow}}/>
@@ -462,77 +543,74 @@ function TripCard({trip,onOpen}){
 }
 
 /* ============================================================
-   TRIP DETAIL + TABS
+   TRIP SHELL — sticky header + bottom tab bar
    ============================================================ */
-function TripDetail({trip, me, flash, onBack}){
+function TripShell({trip,me,flash,onBack}){
   const [tab,setTab]=useState("plan");
-  const patch = useCallback((fields)=>Data.updateTrip(trip.id, fields),[trip.id]);
-
+  const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
   const tabs=[
     {id:"plan",label:"Overview",icon:Ic.pack},
-    {id:"meals",label:"Meals",icon:Ic.food},
-    {id:"trails",label:"Trails",icon:Ic.foot},
-    {id:"map",label:"Map",icon:Ic.map},
     {id:"crew",label:"Crew",icon:Ic.users},
-    {id:"split",label:"Who owes",icon:Ic.dollar},
-    {id:"photos",label:"Photos",icon:Ic.img},
+    {id:"meals",label:"Meals",icon:Ic.food},
+    {id:"map",label:"Map",icon:Ic.map},
   ];
-
   return (
-    <div className="fade">
-      <button style={St.backBtn} onClick={onBack}><Ic.back style={ic(16)}/> All trips</button>
-      <div style={{...St.detailHero,...(trip.cover?{backgroundImage:`url(${trip.cover})`}:{})}}>
-        <div style={St.heroGrad}/>
-        <div style={St.heroInner}>
-          <div style={St.heroDates}><Ic.cal style={ic(13)}/>
-            {trip.start?fmt(trip.start):"TBD"}{trip.end?` – ${fmt(trip.end)}`:""}</div>
-          <h1 style={St.heroTitle}>{trip.name}</h1>
-          <div style={St.heroLoc}><Ic.pin style={ic(14)}/> {trip.location||"Set a location"}</div>
+    <div style={St.tripWrap}>
+      <div style={St.tripScroll} className="fade">
+        <button style={St.backBtn} onClick={onBack}><Ic.back style={ic(16)}/> All trips</button>
+        <div style={{...St.detailHero,...(trip.cover?{backgroundImage:`url(${trip.cover})`}:{})}}>
+          <div style={St.heroGrad}/>
+          <div style={St.heroInner}>
+            <div style={St.heroDates}><Ic.cal style={ic(13)}/> {fmt(trip.start)}{trip.end?` – ${fmt(trip.end)}`:""}</div>
+            <h1 style={St.heroTitle}>{trip.name}</h1>
+            <div style={St.heroLoc}><Ic.pin style={ic(14)}/> {trip.location||"Set a location"}</div>
+          </div>
+        </div>
+
+        <div style={St.tripBody}>
+          {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
+          {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash}/>}
+          {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
+          {tab==="map" && <MapTab trip={trip} patch={patch} flash={flash}/>}
         </div>
       </div>
 
-      <div style={St.tabBar}>
+      <nav style={St.tabBarBottom}>
         {tabs.map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{...St.tab,...(tab===t.id?St.tabOn:{})}}>
-            <t.icon style={ic(14)}/> {t.label}
+            style={{...St.bottomTab,...(tab===t.id?St.bottomTabOn:{})}}>
+            <t.icon style={ic(22)}/>
+            <span style={St.bottomTabLabel}>{t.label}</span>
           </button>
         ))}
-      </div>
-
-      {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
-      {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
-      {tab==="trails" && <TrailsTab trip={trip} patch={patch} flash={flash}/>}
-      {tab==="map" && <MapTab trip={trip} patch={patch} flash={flash}/>}
-      {tab==="crew" && <CrewTab trip={trip} patch={patch} flash={flash}/>}
-      {tab==="split" && <SplitTab trip={trip}/>}
-      {tab==="photos" && <PhotosTab trip={trip} me={me} patch={patch} flash={flash}/>}
+      </nav>
     </div>
   );
 }
 
-function OverviewTab({trip, me, patch, flash, onBack}){
+/* ---------------- OVERVIEW ---------------- */
+function OverviewTab({trip,me,patch,flash,onBack}){
   const miles=(trip.trails||[]).reduce((a,t)=>a+(+t.miles||0),0);
   const cost=(trip.meals||[]).reduce((a,m)=>a+(+m.cost||0),0);
+  const isOwner=trip.ownerId===me.id;
   const tasks=[
     ["Crew added",(trip.members||[]).length>=2],
+    ["Campsite pinned",!!(trip.campLat&&trip.campLng)],
     ["Meals planned",(trip.meals||[]).length>=1],
-    ["Trails mapped",(trip.trails||[]).length>=1],
     ["Cover photo",!!trip.cover],
-    ["Photos added",(trip.photos||[]).length>=1],
   ];
   const pct=Math.round(tasks.filter(t=>t[1]).length/tasks.length*100);
-  const isOwner = trip.ownerId===me.id;
 
-  const removeTrip = async ()=>{
-    if(!confirm(isOwner ? "Delete this trip for everyone? This can't be undone." : "Leave this trip?")) return;
-    await Data.deleteTrip(trip.id); // owner delete; (leave-only would need member removal — kept simple)
-    flash(isOwner?"Trip deleted":"Left trip"); onBack();
+  const removeTrip=async()=>{
+    if(!confirm(isOwner?"Delete this trip for everyone? This can't be undone.":"Leave this trip?"))return;
+    await Data.deleteTrip(trip.id); flash(isOwner?"Trip deleted":"Left trip"); onBack();
   };
 
   return (
     <div style={St.pane}>
       <ShareCard trip={trip} flash={flash}/>
+
+      <CampsiteCard trip={trip} patch={patch} flash={flash}/>
 
       <div style={St.statRow}>
         <Stat icon={Ic.foot} label="Total miles" value={miles.toFixed(1)}/>
@@ -557,14 +635,14 @@ function OverviewTab({trip, me, patch, flash, onBack}){
 
       <div style={St.block}>
         <div style={St.blockHead}><span>Field notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
-        <textarea style={St.notes}
-          placeholder="Gear list, permits, dark-sky windows, bailout plan…"
-          defaultValue={trip.notes}
-          onBlur={e=>patch({notes:e.target.value})}/>
+        <textarea style={St.notes} placeholder="Gear list, permits, dark-sky windows, bailout plan…"
+          defaultValue={trip.notes} onBlur={e=>patch({notes:e.target.value})}/>
         <div style={St.hintSm}>Saves when you tap away.</div>
       </div>
 
-      <CoverEditor trip={trip} patch={patch} flash={flash}/>
+      <ImagePicker label="Cover photo" current={trip.cover}
+        onPicked={dataUrl=>{patch({cover:dataUrl});flash("Cover updated");}}
+        onClear={()=>patch({cover:""})} flash={flash}/>
 
       <button style={St.dangerBtn} onClick={removeTrip}>
         <Ic.trash style={ic(15)}/> {isOwner?"Delete trip":"Leave trip"}
@@ -573,117 +651,364 @@ function OverviewTab({trip, me, patch, flash, onBack}){
   );
 }
 
-function ShareCard({trip, flash}){
-  const copy = async ()=>{
-    try{ await navigator.clipboard.writeText(trip.code); flash("Code copied"); }
-    catch{ flash(trip.code); }
-  };
-  const share = async ()=>{
-    const text = `Join "${trip.name}" on TrailLog. Open the app, tap Join, and enter code: ${trip.code}`;
-    if(navigator.share){ try{ await navigator.share({title:"TrailLog",text}); }catch{} }
-    else copy();
-  };
-  return (
-    <div style={St.shareCard}>
-      <div>
-        <div style={St.shareLabel}>Crew invite code</div>
-        <div style={St.shareCode}>{trip.code}</div>
-        <div style={St.hintSm}>Friends tap “Join” on their phone and type this in.</div>
-      </div>
-      <div style={{display:"flex",gap:8}}>
-        <button style={St.iconChip} onClick={copy} aria-label="Copy code"><Ic.copy style={ic(16)}/></button>
-        <button style={St.iconChip} onClick={share} aria-label="Share invite"><Ic.share style={ic(16)}/></button>
-      </div>
-    </div>
-  );
-}
-
-function CoverEditor({trip,patch,flash}){
-  const [url,setUrl]=useState(trip.cover||"");
-  const [uploading,setUploading]=useState(false);
-  const handleUpload=async(e)=>{
-    const file=e.target.files?.[0]; if(!file) return;
-    setUploading(true);
-    try{
-      const newUrl=await Data.uploadPhoto(trip.id, file);
-      setUrl(newUrl); patch({cover:newUrl}); flash("Cover updated");
-    }catch(err){ console.error(err); flash("Upload failed"); }
-    finally{ setUploading(false); e.target.value=""; }
+function CampsiteCard({trip,patch,flash}){
+  const [pick,setPick]=useState(false);
+  const [lat,setLat]=useState(trip.campLat??""); const [lng,setLng]=useState(trip.campLng??"");
+  const [label,setLabel]=useState(trip.campLabel||"");
+  const has=trip.campLat&&trip.campLng;
+  const save=()=>{
+    const la=parseFloat(lat),ln=parseFloat(lng);
+    if(isNaN(la)||isNaN(ln)){flash("Enter valid coordinates");return;}
+    patch({campLat:la,campLng:ln,campLabel:label.trim()}); flash("Campsite saved");
   };
   return (
     <div style={St.block}>
-      <div style={St.blockHead}><span>Cover photo</span><Ic.img style={{...ic(13),color:"var(--sage)"}}/></div>
-      <div style={{display:"flex",gap:8,marginBottom:8}}>
-        <input style={St.input} placeholder="Paste an image URL" value={url} onChange={e=>setUrl(e.target.value)}/>
-        <button style={St.smallBtn} onClick={()=>{patch({cover:url.trim()});flash("Cover updated");}}>Set</button>
+      <div style={St.blockHead}><span>Campsite</span><Ic.tent style={{...ic(14),color:"var(--ember2)"}}/></div>
+      <Field label="Site name (optional)"><input style={St.input} value={label}
+        placeholder="Bear Rocks dispersed site" onChange={e=>setLabel(e.target.value)}/></Field>
+      <div style={{display:"flex",gap:8}}>
+        <Field label="Latitude"><input style={St.input} value={lat} onChange={e=>setLat(e.target.value)}/></Field>
+        <Field label="Longitude"><input style={St.input} value={lng} onChange={e=>setLng(e.target.value)}/></Field>
       </div>
-      <label style={{...St.smallBtn,cursor:"pointer",fontSize:12}}>
-        <Ic.img style={ic(13)}/> {uploading?"Uploading…":"Upload file"}
-        <input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} disabled={uploading}/>
-      </label>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Pick on map</button>
+        <button style={St.smallBtn} onClick={save}><Ic.check style={ic(14)}/> Save</button>
+        {has && <a style={St.dirBtn} href={directionsURL(trip.campLat,trip.campLng,trip.campLabel||trip.name)} target="_blank" rel="noreferrer">
+          <Ic.nav style={ic(14)}/> Get directions</a>}
+      </div>
+      {has && <div style={St.hintSm}>Directions open in {isIOS()?"Apple Maps":"Google Maps"} to {(+trip.campLat).toFixed(4)}, {(+trip.campLng).toFixed(4)}.</div>}
+      {pick && <PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Pin the campsite"
+        onClose={()=>setPick(false)}
+        onPick={(la,ln)=>{setLat(la.toFixed(6));setLng(ln.toFixed(6));setPick(false);patch({campLat:la,campLng:ln,campLabel:label.trim()});flash("Campsite saved");}}/>}
     </div>
   );
 }
 
-/* ---------------- MEALS ---------------- */
-function MealsTab({trip,patch,flash}){
-  const [open,setOpen]=useState(false);
-  const meals=trip.meals||[]; const members=trip.members||[];
-  const add=(m)=>{ patch({meals:[...meals,{id:uid(),...m,cost:+m.cost||0}]}); flash("Meal added"); setOpen(false); };
-  const del=(id)=>patch({meals:meals.filter(x=>x.id!==id)});
-  const nameOf=(mid)=>members.find(x=>x.id===mid)?.name||"";
-  const days=["Thu","Fri","Sat","Sun","Mon"];
+/* ---------------- CREW (who owes + photos + items + emergency) ---------------- */
+function CrewTab({trip,me,patch,flash}){
+  const members=trip.members||[]; const meals=trip.meals||[]; const photos=trip.photos||[];
+
+  // cost tally
+  const tally=useMemo(()=>{
+    const paid={},owes={}; members.forEach(m=>{paid[m.id]=0;owes[m.id]=0;});
+    meals.forEach(m=>{const c=+m.cost||0; if(m.paidBy&&paid[m.paidBy]!=null)paid[m.paidBy]+=c;
+      const share=members.length?c/members.length:0; members.forEach(mm=>owes[mm.id]+=share);});
+    const map={}; members.forEach(m=>map[m.id]={paid:paid[m.id],share:owes[m.id],net:paid[m.id]-owes[m.id]});
+    return map;
+  },[trip]);
+
+  const [addName,setAddName]=useState("");
+  const addMember=()=>{ if(!addName.trim())return;
+    patch({members:[...members,{id:uid(),name:addName.trim(),email:"",emergency:"",photo:""}]});
+    setAddName(""); flash("Added to crew");
+  };
+  const updateMember=(id,fields)=>patch({members:members.map(m=>m.id===id?{...m,...fields}:m)});
+  const delMember=(id)=>patch({members:members.filter(m=>m.id!==id)});
+
+  const responsibilities=(mid)=>{
+    const out=[];
+    meals.forEach(m=>{ if(m.responsible===mid) out.push(m.title); });
+    return out;
+  };
+
+  const addPhotos=async(mid,fileList)=>{
+    const files=Array.from(fileList).slice(0,6);
+    try{
+      const added=[];
+      for(const f of files){ const d=await fileToCompressedDataURL(f); added.push({id:uid(),by:mid,data:d,ts:Date.now()}); }
+      patch({photos:[...photos,...added]}); flash(`${added.length} photo${added.length>1?"s":""} added`);
+    }catch(e){ flash(e.message||"Couldn't add photo"); }
+  };
+  const delPhoto=(pid)=>patch({photos:photos.filter(p=>p.id!==pid)});
+
   return (
     <div style={St.pane}>
-      <ListHead title="Meal plan" onAdd={()=>setOpen(true)} addLabel="Add meal"/>
-      {meals.length===0 && <Empty icon={Ic.food} text="Plan the menu. Costs split across the crew automatically."/>}
-      <div style={{display:"grid",gap:10}}>
-        {meals.map(m=>(
-          <div key={m.id} style={St.itemRow}>
-            <div style={St.dayChip}>{m.day}</div>
-            <div style={{flex:1}}>
-              <div style={St.itemTitle}>{m.title}</div>
-              <div style={St.itemMeta}>${(+m.cost||0).toFixed(2)} · paid by {nameOf(m.paidBy)||"—"}{m.forAll?" · shared":""}</div>
-            </div>
-            <button style={St.iconBtn} onClick={()=>del(m.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
-          </div>
-        ))}
+      <ShareCard trip={trip} flash={flash}/>
+
+      <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
+        <input style={St.input} placeholder="Add someone by name" value={addName}
+          onChange={e=>setAddName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMember()}/>
+        <button style={St.smallBtn} onClick={addMember}><Ic.plus style={ic(15)}/></button>
       </div>
-      {open && <FormSheet title="Add meal" onClose={()=>setOpen(false)} onSave={add}
-        fields={[
-          {k:"title",label:"Meal",type:"text",req:true},
-          {k:"day",label:"Day",type:"select",opts:days.map(d=>({v:d,l:d})),def:"Fri"},
-          {k:"cost",label:"Cost ($)",type:"number"},
-          {k:"paidBy",label:"Paid by",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
-          {k:"forAll",label:"Split across whole crew",type:"bool",def:true},
-        ]}/>}
+
+      <div style={{display:"grid",gap:14}}>
+        {members.map(m=>{
+          const t=tally[m.id]||{paid:0,share:0,net:0};
+          const resp=responsibilities(m.id);
+          const theirPhotos=photos.filter(p=>p.by===m.id);
+          const isSelf=m.id===me.id;
+          return (
+            <div key={m.id} style={St.memberCard}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                {m.photo
+                  ? <img src={m.photo} alt="" style={St.memberAvatarImg}/>
+                  : <div style={St.avatar}>{m.name.slice(0,1).toUpperCase()}</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={St.itemTitle}>{m.name}{isSelf && <span style={St.youTag}>you</span>}</div>
+                  <div style={{...St.netPill,marginTop:4,display:"inline-flex",
+                    background:t.net>=0?"rgba(127,169,155,.15)":"rgba(232,104,44,.15)",
+                    color:t.net>=0?"var(--sage)":"var(--ember2)"}}>
+                    {Math.abs(t.net)<0.005?"settled up":t.net>0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
+                  </div>
+                </div>
+                <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>
+              </div>
+
+              <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>
+
+              <div style={St.memberRow}>
+                <Ic.food style={{...ic(14),color:"var(--sage)"}}/>
+                <span style={{color:resp.length?"var(--paper)":"var(--sage)"}}>
+                  {resp.length?`Responsible for: ${resp.join(", ")}`:"No meals assigned yet"}
+                </span>
+              </div>
+
+              <div style={St.memberRow}>
+                <Ic.sos style={{...ic(14),color:"var(--sage)"}}/>
+                <input style={St.inlineInput} placeholder="Emergency contact (name + phone)"
+                  defaultValue={m.emergency} onBlur={e=>updateMember(m.id,{emergency:e.target.value})}/>
+              </div>
+
+              <div style={{marginTop:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={St.miniLabel}>Photos from {m.name.split(" ")[0]}</span>
+                  <label style={St.uploadChip}>
+                    <Ic.plus style={ic(13)}/> Add
+                    <input type="file" accept="image/*" multiple style={{display:"none"}}
+                      onChange={e=>{addPhotos(m.id,e.target.files);e.target.value="";}}/>
+                  </label>
+                </div>
+                {theirPhotos.length>0 &&
+                  <div style={St.photoStrip}>
+                    {theirPhotos.map(p=>(
+                      <div key={p.id} style={St.photoThumb}>
+                        <img src={p.data} alt="" style={St.photoImg}/>
+                        <button style={St.photoDel} onClick={()=>delPhoto(p.id)} aria-label="Delete photo"><Ic.x style={ic(12)}/></button>
+                      </div>
+                    ))}
+                  </div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {members.length===0 && <Empty icon={Ic.users} text="Add your crew. Costs split evenly across everyone here."/>}
     </div>
   );
 }
 
-/* ---------------- TRAILS ---------------- */
-function TrailsTab({trip,patch,flash}){
+/* ---------------- MEALS (with per-item shopping list) ---------------- */
+function MealsTab({trip,patch,flash}){
   const [open,setOpen]=useState(false);
-  const [pick,setPick]=useState(false);
-  const [preset,setPreset]=useState(null);
-  const trails=trip.trails||[];
-  const add=(t)=>{ patch({trails:[...trails,{id:uid(),done:false,...t,miles:+t.miles||0,lat:t.lat?+t.lat:null,lng:t.lng?+t.lng:null}]}); flash("Trail added"); setOpen(false); setPreset(null); };
-  const del=(id)=>patch({trails:trails.filter(x=>x.id!==id)});
-  const toggle=(id)=>patch({trails:trails.map(t=>t.id===id?{...t,done:!t.done}:t)});
+  const [showList,setShowList]=useState(false);
+  const meals=trip.meals||[]; const members=trip.members||[];
+  const nameOf=mid=>members.find(x=>x.id===mid)?.name||"";
+
+  const addMeal=(m)=>{
+    patch({meals:[...meals,{id:uid(),title:m.title,day:m.day,cost:+m.cost||0,paidBy:m.paidBy||"",
+      responsible:m.responsible||"",forAll:m.forAll,items:[]}]});
+    flash("Meal added"); setOpen(false);
+  };
+  const delMeal=(id)=>patch({meals:meals.filter(m=>m.id!==id)});
+  const updateMeal=(id,fields)=>patch({meals:meals.map(m=>m.id===id?{...m,...fields}:m)});
+
+  const addItem=(mealId,name,qty)=>{
+    if(!name.trim())return;
+    patch({meals:meals.map(m=>m.id===mealId?{...m,items:[...(m.items||[]),{id:uid(),name:name.trim(),qty:qty.trim(),got:false}]}:m)});
+  };
+  const toggleItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.map(i=>i.id===itemId?{...i,got:!i.got}:i)}:m)});
+  const delItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.filter(i=>i.id!==itemId)}:m)});
+
+  const allItems=useMemo(()=>{
+    const out=[]; meals.forEach(m=>(m.items||[]).forEach(i=>out.push({...i,meal:m.title,mealId:m.id})));
+    return out;
+  },[meals]);
+  const toBuy=allItems.filter(i=>!i.got).length;
+
+  const days=["Thu","Fri","Sat","Sun","Mon"];
+
   return (
     <div style={St.pane}>
       <div style={St.listHead}>
-        <h2 style={St.h2}>Trails & waypoints</h2>
+        <h2 style={St.h2}>Meal plan</h2>
         <div style={{display:"flex",gap:8}}>
-          <button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Drop pin</button>
-          <button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Add</button>
+          <button style={St.smallBtn} onClick={()=>setShowList(true)}><Ic.cart style={ic(14)}/> List{toBuy?` (${toBuy})`:""}</button>
+          <button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Meal</button>
         </div>
       </div>
-      {trails.length===0 && <Empty icon={Ic.foot} text="Map your routes. Tap “Drop pin” to set coordinates on a map, or add them by hand."/>}
+
+      {meals.length===0 && <Empty icon={Ic.food} text="Plan meals, add the ingredients each one needs, and the app builds your shopping list."/>}
+
+      <div style={{display:"grid",gap:12}}>
+        {meals.map(m=>(
+          <MealCard key={m.id} meal={m} members={members} nameOf={nameOf}
+            onDel={()=>delMeal(m.id)} onUpdate={f=>updateMeal(m.id,f)}
+            onAddItem={(n,q)=>addItem(m.id,n,q)} onToggleItem={iid=>toggleItem(m.id,iid)} onDelItem={iid=>delItem(m.id,iid)}/>
+        ))}
+      </div>
+
+      {open && <FormSheet title="Add meal" onClose={()=>setOpen(false)} onSave={addMeal}
+        fields={[
+          {k:"title",label:"Meal",type:"text",req:true},
+          {k:"day",label:"Day",type:"select",opts:days.map(d=>({v:d,l:d})),def:"Fri"},
+          {k:"cost",label:"Estimated cost ($)",type:"number"},
+          {k:"paidBy",label:"Paid by",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
+          {k:"responsible",label:"Who's cooking / bringing it",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
+          {k:"forAll",label:"Split cost across whole crew",type:"bool",def:true},
+        ]}/>}
+
+      {showList && <ShoppingList items={allItems} onToggle={(mealId,itemId)=>toggleItem(mealId,itemId)} onClose={()=>setShowList(false)}/>}
+    </div>
+  );
+}
+
+function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onDelItem}){
+  const [exp,setExp]=useState(false);
+  const [iname,setIname]=useState(""); const [iqty,setIqty]=useState("");
+  const items=meal.items||[];
+  const got=items.filter(i=>i.got).length;
+  return (
+    <div style={St.mealCard}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={St.dayChip}>{meal.day}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={St.itemTitle}>{meal.title}</div>
+          <div style={St.itemMeta}>
+            ${(+meal.cost||0).toFixed(2)}
+            {meal.paidBy?` · paid by ${nameOf(meal.paidBy)}`:""}
+            {meal.responsible?` · ${nameOf(meal.responsible)} cooking`:""}
+          </div>
+        </div>
+        <button style={St.iconBtn} onClick={onDel} aria-label="Delete meal"><Ic.trash style={ic(15)}/></button>
+      </div>
+
+      <button style={St.expandRow} onClick={()=>setExp(!exp)}>
+        <Ic.cart style={{...ic(13),color:"var(--sage)"}}/>
+        {items.length?`${items.length} ingredient${items.length>1?"s":""} · ${got}/${items.length} got`:"Add ingredients"}
+        <Ic.chev style={{...ic(14),marginLeft:"auto",transform:exp?"rotate(90deg)":"none",transition:"transform .2s"}}/>
+      </button>
+
+      {exp &&
+        <div style={St.itemsBox}>
+          {items.map(i=>(
+            <div key={i.id} style={St.shopRow}>
+              <button style={{...St.checkBtn,...(i.got?St.checkOn:{})}} onClick={()=>onToggleItem(i.id)} aria-label="Got it">
+                {i.got && <Ic.check style={{width:12,height:12,color:"var(--night)"}}/>}
+              </button>
+              <span style={{flex:1,textDecoration:i.got?"line-through":"none",opacity:i.got?.55:1,fontSize:13.5}}>
+                {i.name}{i.qty?` · ${i.qty}`:""}
+              </span>
+              <button style={St.iconBtn} onClick={()=>onDelItem(i.id)} aria-label="Remove"><Ic.x style={ic(13)}/></button>
+            </div>
+          ))}
+          <div style={{display:"flex",gap:6,marginTop:8}}>
+            <input style={{...St.input,flex:2}} placeholder="Ingredient" value={iname} onChange={e=>setIname(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){onAddItem(iname,iqty);setIname("");setIqty("");}}}/>
+            <input style={{...St.input,flex:1}} placeholder="Qty" value={iqty} onChange={e=>setIqty(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"){onAddItem(iname,iqty);setIname("");setIqty("");}}}/>
+            <button style={St.smallBtn} onClick={()=>{onAddItem(iname,iqty);setIname("");setIqty("");}}><Ic.plus style={ic(15)}/></button>
+          </div>
+        </div>}
+    </div>
+  );
+}
+
+function ShoppingList({items,onToggle,onClose}){
+  const remaining=items.filter(i=>!i.got);
+  const done=items.filter(i=>i.got);
+  return (
+    <Modal title="Shopping list" onClose={onClose}>
+      {items.length===0 && <p style={St.sub}>No ingredients yet. Open a meal and add what it needs.</p>}
+      {remaining.length>0 &&
+        <div style={{marginBottom:14}}>
+          <div style={St.miniLabel}>To buy ({remaining.length})</div>
+          <div style={{display:"grid",gap:6,marginTop:8}}>
+            {remaining.map(i=>(
+              <div key={i.id} style={St.shopRow}>
+                <button style={St.checkBtn} onClick={()=>onToggle(i.mealId,i.id)} aria-label="Got it"/>
+                <span style={{flex:1,fontSize:13.5}}>{i.name}{i.qty?` · ${i.qty}`:""}</span>
+                <span style={St.shopMeal}>{i.meal}</span>
+              </div>
+            ))}
+          </div>
+        </div>}
+      {done.length>0 &&
+        <div>
+          <div style={St.miniLabel}>Got it ({done.length})</div>
+          <div style={{display:"grid",gap:6,marginTop:8}}>
+            {done.map(i=>(
+              <div key={i.id} style={St.shopRow}>
+                <button style={{...St.checkBtn,...St.checkOn}} onClick={()=>onToggle(i.mealId,i.id)} aria-label="Undo">
+                  <Ic.check style={{width:12,height:12,color:"var(--night)"}}/>
+                </button>
+                <span style={{flex:1,fontSize:13.5,textDecoration:"line-through",opacity:.55}}>{i.name}{i.qty?` · ${i.qty}`:""}</span>
+              </div>
+            ))}
+          </div>
+        </div>}
+    </Modal>
+  );
+}
+
+/* ---------------- MAP (per-trip: campsite + waypoints) ---------------- */
+function MapTab({trip,patch,flash}){
+  const ref=useRef(null);
+  const [open,setOpen]=useState(false); const [pick,setPick]=useState(false); const [preset,setPreset]=useState(null);
+  const trails=trip.trails||[];
+  const waypoints=trails.filter(t=>t.lat&&t.lng);
+
+  useEffect(()=>{
+    if(!ref.current) return;
+    const cs=(trip.campLat&&trip.campLng)?[+trip.campLat,+trip.campLng]:null;
+    const center=cs||(waypoints.length?[+waypoints[0].lat,+waypoints[0].lng]:[39.0476,-79.3074]);
+    const map=L.map(ref.current,{attributionControl:false}).setView(center,12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
+    const bounds=[];
+    if(cs){
+      const tentIcon=L.divIcon({className:"",html:`<div style="background:#E8682C;width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.4)"><span style="transform:rotate(45deg);font-size:13px">⛺</span></div>`,iconSize:[26,26],iconAnchor:[13,26]});
+      L.marker(cs,{icon:tentIcon}).addTo(map).bindPopup(`<b>Campsite</b><br>${trip.campLabel||trip.name}`);
+      bounds.push(cs);
+    }
+    waypoints.forEach(p=>{
+      L.marker([+p.lat,+p.lng]).addTo(map).bindPopup(`<b>${p.name}</b><br>${(+p.miles||0).toFixed(1)} mi · ${p.difficulty||""}`);
+      bounds.push([+p.lat,+p.lng]);
+    });
+    if(bounds.length>1) map.fitBounds(L.latLngBounds(bounds).pad(0.3));
+    setTimeout(()=>map.invalidateSize(),120);
+    return ()=>map.remove();
+  },[trip.id, trip.campLat, trip.campLng, trails.map(t=>t.id+t.lat+t.lng).join()]);
+
+  const addTrail=(t)=>{
+    patch({trails:[...trails,{id:uid(),done:false,name:t.name,miles:+t.miles||0,difficulty:t.difficulty,
+      lat:t.lat?+t.lat:null,lng:t.lng?+t.lng:null}]});
+    flash("Trail added"); setOpen(false); setPreset(null);
+  };
+  const delTrail=(id)=>patch({trails:trails.filter(t=>t.id!==id)});
+  const toggleTrail=(id)=>patch({trails:trails.map(t=>t.id===id?{...t,done:!t.done}:t)});
+
+  return (
+    <div style={St.pane}>
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Trip map</h2>
+        <div style={{display:"flex",gap:8}}>
+          <button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Drop pin</button>
+          <button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Trail</button>
+        </div>
+      </div>
+
+      <div ref={ref} style={St.mapBig}/>
+      {(trip.campLat&&trip.campLng) &&
+        <a style={{...St.dirBtn,marginTop:10,width:"100%",justifyContent:"center"}}
+          href={directionsURL(trip.campLat,trip.campLng,trip.campLabel||trip.name)} target="_blank" rel="noreferrer">
+          <Ic.nav style={ic(15)}/> Directions to campsite
+        </a>}
+
+      <h3 style={{...St.h2,fontSize:16,marginTop:20}}>Trails & waypoints</h3>
+      {trails.length===0 && <Empty icon={Ic.foot} text="Drop a pin or add a trail to map your routes."/>}
       <div style={{display:"grid",gap:10}}>
         {trails.map(t=>(
           <div key={t.id} style={St.itemRow}>
-            <button style={{...St.checkBtn,...(t.done?St.checkOn:{})}} onClick={()=>toggle(t.id)} aria-label="Mark done">
+            <button style={{...St.checkBtn,...(t.done?St.checkOn:{})}} onClick={()=>toggleTrail(t.id)} aria-label="Done">
               {t.done && <Ic.check style={{width:13,height:13,color:"var(--night)"}}/>}
             </button>
             <div style={{flex:1}}>
@@ -691,13 +1016,13 @@ function TrailsTab({trip,patch,flash}){
               <div style={St.itemMeta}>{(+t.miles||0).toFixed(1)} mi · {t.difficulty||"—"}{t.lat?` · ${(+t.lat).toFixed(4)}, ${(+t.lng).toFixed(4)}`:""}</div>
             </div>
             {t.lat&&t.lng &&
-              <a style={St.navBtn} href={`https://maps.google.com/?q=${t.lat},${t.lng}`} target="_blank" rel="noreferrer" aria-label="Navigate"><Ic.nav style={ic(14)}/></a>}
-            <button style={St.iconBtn} onClick={()=>del(t.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+              <a style={St.navBtn} href={directionsURL(t.lat,t.lng,t.name)} target="_blank" rel="noreferrer" aria-label="Directions"><Ic.nav style={ic(14)}/></a>}
+            <button style={St.iconBtn} onClick={()=>delTrail(t.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
           </div>
         ))}
       </div>
 
-      {open && <FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpen(false);setPreset(null);}} onSave={add}
+      {open && <FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpen(false);setPreset(null);}} onSave={addTrail}
         initial={preset||{}}
         fields={[
           {k:"name",label:"Trail name",type:"text",req:true},
@@ -706,227 +1031,65 @@ function TrailsTab({trip,patch,flash}){
           {k:"lat",label:"Latitude",type:"text"},
           {k:"lng",label:"Longitude",type:"text"},
         ]}/>}
-
-      {pick && <PinPicker trip={trip}
+      {pick && <PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Drop a waypoint"
         onClose={()=>setPick(false)}
-        onPick={(lat,lng)=>{ setPick(false); setPreset({lat:lat.toFixed(6),lng:lng.toFixed(6)}); setOpen(true); }}/>}
-    </div>
-  );
-}
-
-/* ---------------- MAP TAB (all pins) ---------------- */
-function MapTab({trip}){
-  const ref=useRef(null); const mapRef=useRef(null);
-  const pins=(trip.trails||[]).filter(t=>t.lat&&t.lng);
-  useEffect(()=>{
-    if(!ref.current) return;
-    const center = pins.length?[+pins[0].lat,+pins[0].lng]:[39.0476,-79.3074];
-    const map=L.map(ref.current,{attributionControl:false}).setView(center, pins.length?11:9);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
-    const group=[];
-    pins.forEach(p=>{
-      const mk=L.marker([+p.lat,+p.lng]).addTo(map)
-        .bindPopup(`<b>${p.name}</b><br>${(+p.miles||0).toFixed(1)} mi · ${p.difficulty||""}`);
-      group.push(mk.getLatLng());
-    });
-    if(group.length>1) map.fitBounds(L.latLngBounds(group).pad(0.3));
-    mapRef.current=map;
-    setTimeout(()=>map.invalidateSize(),120);
-    return ()=>map.remove();
-  },[trip.id]);
-  return (
-    <div style={St.pane}>
-      <ListHead title="Trip map"/>
-      {pins.length===0 && <Empty icon={Ic.map} text="No pinned waypoints yet. Add coordinates on the Trails tab and they'll appear here."/>}
-      <div ref={ref} style={St.mapBig}/>
-      {pins.length>0 && <div style={St.hintSm}>Showing {pins.length} {pins.length===1?"waypoint":"waypoints"}. Tap a marker for details.</div>}
+        onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setOpen(true);}}/>}
     </div>
   );
 }
 
 /* ---------------- PIN PICKER ---------------- */
-function PinPicker({trip,onPick,onClose}){
+function PinPicker({startLat,startLng,title,onPick,onClose}){
   const ref=useRef(null); const [sel,setSel]=useState(null);
   useEffect(()=>{
     if(!ref.current) return;
-    const existing=(trip.trails||[]).filter(t=>t.lat&&t.lng);
-    const center=existing.length?[+existing[0].lat,+existing[0].lng]:[39.0476,-79.3074];
+    const center=(startLat&&startLng)?[+startLat,+startLng]:[39.0476,-79.3074];
     const map=L.map(ref.current,{attributionControl:false}).setView(center,11);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
-    existing.forEach(p=>L.circleMarker([+p.lat,+p.lng],{radius:5,color:"#7FA99B",fillOpacity:.7}).addTo(map).bindPopup(p.name));
-    let marker=null;
-    map.on("click",e=>{
-      setSel(e.latlng);
-      if(marker) marker.setLatLng(e.latlng);
-      else marker=L.marker(e.latlng).addTo(map);
-    });
+    let marker=(startLat&&startLng)?L.marker(center).addTo(map):null;
+    if(marker) setSel({lat:+startLat,lng:+startLng});
+    map.on("click",e=>{ setSel(e.latlng); if(marker)marker.setLatLng(e.latlng); else marker=L.marker(e.latlng).addTo(map); });
     setTimeout(()=>map.invalidateSize(),120);
     return ()=>map.remove();
   },[]);
   return (
-    <Modal title="Drop a pin" onClose={onClose} wide>
-      <p style={{...St.sub,marginTop:0}}>Tap the map where the trailhead or waypoint is. You can fine-tune the name and distance next.</p>
+    <Modal title={title} onClose={onClose} wide>
+      <p style={{...St.sub,marginTop:0}}>Tap the map to set the spot.</p>
       <div ref={ref} style={St.mapPick}/>
       <div style={St.modalActions}>
         <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
-        <button style={St.primaryBtn} disabled={!sel} onClick={()=>sel&&onPick(sel.lat,sel.lng)}>
-          <Ic.check style={ic(15)}/> Use this spot
-        </button>
+        <button style={St.primaryBtn} disabled={!sel} onClick={()=>sel&&onPick(sel.lat,sel.lng)}><Ic.check style={ic(15)}/> Use this spot</button>
       </div>
     </Modal>
   );
 }
 
-/* ---------------- CREW ---------------- */
-function CrewTab({trip,patch,flash}){
-  const [name,setName]=useState("");
-  const members=trip.members||[];
-  const add=()=>{ if(!name.trim())return; patch({members:[...members,{id:uid(),name:name.trim()}]}); flash("Added to crew"); setName(""); };
-  const del=(id)=>patch({members:members.filter(m=>m.id!==id)});
-  return (
-    <div style={St.pane}>
-      <ListHead title="Trail crew"/>
-      <ShareCard trip={trip} flash={flash}/>
-      <div style={{display:"flex",gap:8,margin:"14px 0"}}>
-        <input style={St.input} placeholder="Add someone by name" value={name}
-          onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()}/>
-        <button style={St.smallBtn} onClick={add}><Ic.plus style={ic(15)}/></button>
-      </div>
-      <div style={St.hintSm}>Add names yourself, or share the code so friends join from their own phones.</div>
-      <div style={{display:"grid",gap:10,marginTop:14}}>
-        {members.map(m=>(
-          <div key={m.id} style={St.itemRow}>
-            <div style={St.avatar}>{m.name.slice(0,1).toUpperCase()}</div>
-            <div style={{...St.itemTitle,flex:1}}>{m.name}</div>
-            <button style={St.iconBtn} onClick={()=>del(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ---------------- PHOTOS ---------------- */
-function PhotosTab({trip, me, patch, flash}){
-  const [uploading,setUploading]=useState(false);
-  const photos=trip.photos||[];
-
-  const handleUpload=async(e)=>{
-    const files=Array.from(e.target.files||[]); if(!files.length) return;
-    setUploading(true);
-    try{
-      const urls=await Promise.all(files.map(f=>Data.uploadPhoto(trip.id, f)));
-      const newPhotos=urls.map(url=>({id:uid(),url,uploadedBy:me.id,uploadedAt:Date.now()}));
-      patch({photos:[...photos,...newPhotos]});
-      flash(`${newPhotos.length} photo${newPhotos.length>1?"s":""} added`);
-    }catch(err){ console.error(err); flash("Upload failed"); }
-    finally{ setUploading(false); e.target.value=""; }
-  };
-
-  const del=(id)=>{ if(!confirm("Remove this photo?")) return; patch({photos:photos.filter(p=>p.id!==id)}); };
-  const setAsCover=(url)=>{ patch({cover:url}); flash("Cover updated"); };
-
-  return (
-    <div style={St.pane}>
-      <ListHead title="Trip photos"/>
-      <label style={{...St.smallBtn,cursor:"pointer",marginBottom:14,display:"inline-flex"}}>
-        <Ic.img style={ic(14)}/> {uploading?"Uploading…":"Add photos"}
-        <input type="file" accept="image/*" multiple style={{display:"none"}} onChange={handleUpload} disabled={uploading}/>
-      </label>
-      {photos.length===0 && <Empty icon={Ic.img} text="No photos yet. Tap 'Add photos' to share shots from the trip."/>}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
-        {photos.map(p=>(
-          <div key={p.id} style={{position:"relative",borderRadius:12,overflow:"hidden",border:"1px solid var(--line)",aspectRatio:"1",background:"var(--moss)"}}>
-            <img src={p.url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-            <div style={{position:"absolute",top:6,right:6,display:"flex",gap:4}}>
-              <button title="Set as cover" onClick={()=>setAsCover(p.url)}
-                style={{width:26,height:26,background:"rgba(15,26,23,.85)",border:"none",borderRadius:6,color:"var(--gold)",cursor:"pointer",display:"grid",placeItems:"center"}}>
-                <Ic.img style={ic(13)}/>
-              </button>
-              <button title="Delete" onClick={()=>del(p.id)}
-                style={{width:26,height:26,background:"rgba(15,26,23,.85)",border:"none",borderRadius:6,color:"var(--mist)",cursor:"pointer",display:"grid",placeItems:"center"}}>
-                <Ic.trash style={ic(13)}/>
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {photos.length>0 && <div style={St.hintSm}>Tap the image icon to set a photo as the trip cover.</div>}
-    </div>
-  );
-}
-
-/* ---------------- SPLIT ---------------- */
-function SplitTab({trip}){
-  const members=trip.members||[]; const meals=trip.meals||[];
-  const tally=useMemo(()=>{
-    const paid={},owes={};
-    members.forEach(m=>{paid[m.id]=0;owes[m.id]=0;});
-    meals.forEach(m=>{
-      const c=+m.cost||0;
-      if(m.paidBy&&paid[m.paidBy]!=null) paid[m.paidBy]+=c;
-      const share=members.length?c/members.length:0;
-      members.forEach(mem=>owes[mem.id]+=share);
-    });
-    return members.map(m=>({name:m.name,paid:paid[m.id],share:owes[m.id],net:paid[m.id]-owes[m.id]}));
-  },[trip]);
-  const total=meals.reduce((a,m)=>a+(+m.cost||0),0);
-  if(members.length===0) return <div style={St.pane}><Empty icon={Ic.dollar} text="Add crew members to split costs."/></div>;
-  return (
-    <div style={St.pane}>
-      <div style={St.block}>
-        <div style={St.blockHead}><span>Shared food total</span><span style={{color:"var(--ember2)"}}>${total.toFixed(2)}</span></div>
-        <div style={St.sub}>Split evenly across {members.length} {members.length===1?"person":"people"} · ${(total/members.length).toFixed(2)} each</div>
-      </div>
-      <div style={{display:"grid",gap:10}}>
-        {tally.map(t=>(
-          <div key={t.name} style={St.itemRow}>
-            <div style={St.avatar}>{t.name.slice(0,1).toUpperCase()}</div>
-            <div style={{flex:1}}>
-              <div style={St.itemTitle}>{t.name}</div>
-              <div style={St.itemMeta}>paid ${t.paid.toFixed(2)} · owes ${t.share.toFixed(2)}</div>
-            </div>
-            <div style={{...St.netPill,
-              background:t.net>=0?"rgba(127,169,155,0.15)":"rgba(232,104,44,0.15)",
-              color:t.net>=0?"var(--sage)":"var(--ember2)"}}>
-              {t.net>=0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={St.hintSm}>“Paid by” on each meal feeds this. Whoever fronts cash gets paid back by the rest.</div>
-    </div>
-  );
-}
-
-/* ============================================================
-   PROFILE
-   ============================================================ */
-function Profile({me,onName,mode,onBack}){
-  const [n,setN]=useState(me.name);
+/* ---------------- PROFILE ---------------- */
+function Profile({me,mode,onBack,onSignOut}){
   return (
     <div className="fade">
       <button style={St.backBtn} onClick={onBack}><Ic.back style={ic(16)}/> Back</button>
-      <h1 style={St.h1}>You</h1>
+      <h1 style={St.h1}>Account</h1>
       <div style={St.block}>
-        <div style={St.blockHead}><span>Display name</span></div>
-        <div style={{display:"flex",gap:8}}>
-          <input style={St.input} value={n} onChange={e=>setN(e.target.value)}/>
-          <button style={St.smallBtn} onClick={()=>n.trim()&&onName(n.trim())}>Save</button>
+        <div style={St.blockHead}><span>Signed in as</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={St.avatar}>{me.name.slice(0,1).toUpperCase()}</div>
+          <div><div style={St.itemTitle}>{me.name}</div><div style={St.itemMeta}>{me.email||"local account"}</div></div>
         </div>
+        <button style={{...St.dangerBtn,marginTop:14}} onClick={onSignOut}><Ic.logout style={ic(15)}/> Sign out</button>
       </div>
       <div style={St.block}>
         <div style={St.blockHead}><span>Sync status</span>
           <span style={{...St.modeBadge,background:mode==="live"?"rgba(91,191,138,.15)":"rgba(232,178,60,.15)",
             color:mode==="live"?"#7FD8A8":"var(--gold)"}}>
             {mode==="live"?<Ic.cloud style={ic(13)}/>:<Ic.phone style={ic(13)}/>}
-            {mode==="live"?"Live · shared with your crew":"Local · this device only"}
+            {mode==="live"?"Live · synced to your account":"Local · this device only"}
           </span>
         </div>
         <p style={{...St.sub,marginTop:4}}>
           {mode==="live"
-            ? "Your trips sync to everyone who joined with the code. Changes show up on their phones within seconds."
-            : "Add your Firebase keys (see the setup guide) to turn on live sharing. Until then, trips live only on this device."}
+            ? "Your account and trips are stored in Firebase. Sign in on any phone to see the same data."
+            : "Add Firebase keys (setup guide) to turn on real accounts that work across phones."}
         </p>
       </div>
       <div style={St.block}>
@@ -935,7 +1098,7 @@ function Profile({me,onName,mode,onBack}){
           <li>Open this app in <b>Safari</b>.</li>
           <li>Tap the <b>Share</b> button (square with an up-arrow).</li>
           <li>Choose <b>Add to Home Screen</b>.</li>
-          <li>It now opens full-screen like any app.</li>
+          <li>It opens full-screen like any app.</li>
         </ol>
       </div>
     </div>
@@ -945,27 +1108,70 @@ function Profile({me,onName,mode,onBack}){
 /* ============================================================
    SHARED PIECES
    ============================================================ */
+function ImagePicker({label,current,onPicked,onClear,flash}){
+  const [busy,setBusy]=useState(false);
+  const handle=async(file)=>{
+    if(!file)return; setBusy(true);
+    try{ const d=await fileToCompressedDataURL(file); onPicked(d); }
+    catch(e){ flash&&flash(e.message||"Couldn't load that image"); }
+    setBusy(false);
+  };
+  return (
+    <div style={St.block}>
+      <div style={St.blockHead}><span>{label}</span><Ic.img style={{...ic(13),color:"var(--sage)"}}/></div>
+      {current &&
+        <div style={{position:"relative",marginBottom:10}}>
+          <img src={current} alt="" style={St.coverPreview}/>
+          <button style={St.photoDel} onClick={onClear} aria-label="Remove"><Ic.x style={ic(13)}/></button>
+        </div>}
+      <label style={{...St.smallBtn,display:"inline-flex",cursor:"pointer",opacity:busy?.6:1}}>
+        {busy ? <><Ic.tent style={ic(14)} className="spin"/> Working…</> : <><Ic.img style={ic(14)}/> {current?"Replace photo":"Choose photo"}</>}
+        <input type="file" accept="image/*" style={{display:"none"}} disabled={busy}
+          onChange={e=>{handle(e.target.files[0]);e.target.value="";}}/>
+      </label>
+      <div style={St.hintSm}>Pick from your camera roll or take a new one. Photos are shrunk automatically so they upload fast.</div>
+    </div>
+  );
+}
+
+function ShareCard({trip,flash}){
+  const copy=async()=>{try{await navigator.clipboard.writeText(trip.code);flash("Code copied");}catch{flash(trip.code);}};
+  const share=async()=>{
+    const text=`Join "${trip.name}" on Campable. Open the app, tap Join, and enter code: ${trip.code}`;
+    if(navigator.share){try{await navigator.share({title:"Campable",text});}catch{}}else copy();
+  };
+  return (
+    <div style={St.shareCard}>
+      <div>
+        <div style={St.shareLabel}>Crew invite code</div>
+        <div style={St.shareCode}>{trip.code}</div>
+        <div style={St.hintSm}>Friends tap "Join" and type this in.</div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button style={St.iconChip} onClick={copy} aria-label="Copy"><Ic.copy style={ic(16)}/></button>
+        <button style={St.iconChip} onClick={share} aria-label="Share"><Ic.share style={ic(16)}/></button>
+      </div>
+    </div>
+  );
+}
+
 function Stat({icon:Icon,label,value}){
-  return <div style={St.statCard}>
-    <Icon style={{...ic(16),color:"var(--ember2)"}}/>
-    <div style={St.statValue}>{value}</div>
-    <div style={St.statLabel}>{label}</div>
-  </div>;
+  return <div style={St.statCard}><Icon style={{...ic(16),color:"var(--ember2)"}}/>
+    <div style={St.statValue}>{value}</div><div style={St.statLabel}>{label}</div></div>;
 }
 function ListHead({title,onAdd,addLabel}){
-  return <div style={St.listHead}>
-    <h2 style={St.h2}>{title}</h2>
-    {onAdd && <button style={St.smallBtn} onClick={onAdd}><Ic.plus style={ic(14)}/> {addLabel}</button>}
-  </div>;
+  return <div style={St.listHead}><h2 style={St.h2}>{title}</h2>
+    {onAdd && <button style={St.smallBtn} onClick={onAdd}><Ic.plus style={ic(14)}/> {addLabel}</button>}</div>;
 }
 function Empty({icon:Icon,text}){
   return <div style={St.empty}><Icon style={{...ic(26),color:"var(--mist)"}}/><span>{text}</span></div>;
 }
 
 function TripForm({onSave,onClose}){
-  const [f,setF]=useState({name:"",location:"",start:"",end:"",cover:""});
+  const [f,setF]=useState({name:"",location:"",start:"",end:"",campLat:"",campLng:"",campLabel:""});
+  const [pick,setPick]=useState(false);
   return (
-    <Modal title="New expedition" onClose={onClose}>
+    <Modal title="New trip" onClose={onClose}>
       <Field label="Trip name"><input style={St.input} autoFocus value={f.name}
         placeholder="Dolly Sods Overlander" onChange={e=>setF({...f,name:e.target.value})}/></Field>
       <Field label="Location"><input style={St.input} value={f.location}
@@ -974,28 +1180,33 @@ function TripForm({onSave,onClose}){
         <Field label="Start"><input type="date" style={St.input} value={f.start} onChange={e=>setF({...f,start:e.target.value})}/></Field>
         <Field label="End"><input type="date" style={St.input} value={f.end} onChange={e=>setF({...f,end:e.target.value})}/></Field>
       </div>
-      <Field label="Cover image URL (optional)"><input style={St.input} value={f.cover}
-        placeholder="https://…" onChange={e=>setF({...f,cover:e.target.value})}/></Field>
+      <Field label="Campsite name (optional)"><input style={St.input} value={f.campLabel}
+        placeholder="e.g. Bear Rocks site" onChange={e=>setF({...f,campLabel:e.target.value})}/></Field>
+      <div style={{display:"flex",gap:10}}>
+        <Field label="Camp latitude"><input style={St.input} value={f.campLat} onChange={e=>setF({...f,campLat:e.target.value})}/></Field>
+        <Field label="Camp longitude"><input style={St.input} value={f.campLng} onChange={e=>setF({...f,campLng:e.target.value})}/></Field>
+      </div>
+      <button style={{...St.smallBtn,marginBottom:6}} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Pick campsite on map</button>
       <div style={St.modalActions}>
         <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
-        <button style={St.primaryBtn} disabled={!f.name.trim()} onClick={()=>f.name.trim()&&onSave(f)}>
-          <Ic.check style={ic(15)}/> Create trip</button>
+        <button style={St.primaryBtn} disabled={!f.name.trim()} onClick={()=>f.name.trim()&&onSave(f)}><Ic.check style={ic(15)}/> Create trip</button>
       </div>
+      {pick && <PinPicker startLat={f.campLat} startLng={f.campLng} title="Pin the campsite"
+        onClose={()=>setPick(false)} onPick={(la,ln)=>{setF({...f,campLat:la.toFixed(6),campLng:ln.toFixed(6)});setPick(false);}}/>}
     </Modal>
   );
 }
 
 function JoinForm({onJoin,onClose}){
   const [c,setC]=useState(""); const [err,setErr]=useState(false);
-  const go=async()=>{ const ok=await onJoin(c); if(!ok) setErr(true); };
+  const go=async()=>{const ok=await onJoin(c);if(!ok)setErr(true);};
   return (
     <Modal title="Join a trip" onClose={onClose}>
-      <p style={{...St.sub,marginTop:0}}>Enter the 6-character code from whoever planned the trip.</p>
+      <p style={{...St.sub,marginTop:0}}>Enter the 6-character code from whoever planned it.</p>
       <input style={{...St.input,textAlign:"center",fontFamily:"'Oswald',sans-serif",fontSize:24,letterSpacing:6,textTransform:"uppercase"}}
         maxLength={6} autoFocus value={c} placeholder="ABC123"
-        onChange={e=>{setC(e.target.value.toUpperCase());setErr(false);}}
-        onKeyDown={e=>e.key==="Enter"&&go()}/>
-      {err && <div style={St.errText}>No trip found with that code. Double-check it with your crew.</div>}
+        onChange={e=>{setC(e.target.value.toUpperCase());setErr(false);}} onKeyDown={e=>e.key==="Enter"&&go()}/>
+      {err && <div style={St.errText}>No trip found with that code. Double-check with your crew.</div>}
       <div style={St.modalActions}>
         <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
         <button style={St.primaryBtn} disabled={c.length<6} onClick={go}>Join trip</button>
@@ -1005,16 +1216,15 @@ function JoinForm({onJoin,onClose}){
 }
 
 function FormSheet({title,fields,onSave,onClose,initial={}}){
-  const init={}; fields.forEach(f=>{ init[f.k]= initial[f.k]!=null?initial[f.k] : (f.def!=null?f.def:(f.type==="bool"?false:"")); });
+  const init={}; fields.forEach(f=>{init[f.k]=initial[f.k]!=null?initial[f.k]:(f.def!=null?f.def:(f.type==="bool"?false:""));});
   const [v,setV]=useState(init);
-  const submit=()=>{ const bad=fields.find(f=>f.req&&!String(v[f.k]).trim()); if(bad)return; onSave(v); };
+  const submit=()=>{const bad=fields.find(f=>f.req&&!String(v[f.k]).trim());if(bad)return;onSave(v);};
   return (
     <Modal title={title} onClose={onClose}>
       {fields.map(f=>(
         <Field key={f.k} label={f.label}>
           {(f.type==="text"||f.type==="number") &&
-            <input style={St.input} type={f.type==="number"?"number":"text"} value={v[f.k]}
-              onChange={e=>setV({...v,[f.k]:e.target.value})}/>}
+            <input style={St.input} type={f.type==="number"?"number":"text"} value={v[f.k]} onChange={e=>setV({...v,[f.k]:e.target.value})}/>}
           {f.type==="select" &&
             <select style={St.input} value={v[f.k]} onChange={e=>setV({...v,[f.k]:e.target.value})}>
               {f.allowEmpty && <option value="">—</option>}
@@ -1022,8 +1232,7 @@ function FormSheet({title,fields,onSave,onClose,initial={}}){
             </select>}
           {f.type==="bool" &&
             <button style={{...St.toggle,...(v[f.k]?St.toggleOn:{})}} onClick={()=>setV({...v,[f.k]:!v[f.k]})}>
-              <span style={{...St.toggleKnob,...(v[f.k]?St.toggleKnobOn:{})}}/>{v[f.k]?"Yes":"No"}
-            </button>}
+              <span style={{...St.toggleKnob,...(v[f.k]?St.toggleKnobOn:{})}}/>{v[f.k]?"Yes":"No"}</button>}
         </Field>
       ))}
       <div style={St.modalActions}>
@@ -1037,10 +1246,8 @@ function FormSheet({title,fields,onSave,onClose,initial={}}){
 function Modal({title,children,onClose,wide}){
   return <div style={St.overlay} onClick={onClose}>
     <div style={{...St.modal,...(wide?{maxWidth:560}:{})}} className="fade" onClick={e=>e.stopPropagation()}>
-      <div style={St.modalHead}>
-        <span style={St.modalTitle}>{title}</span>
-        <button style={St.iconBtn} onClick={onClose} aria-label="Close"><Ic.x style={ic(18)}/></button>
-      </div>
+      <div style={St.modalHead}><span style={St.modalTitle}>{title}</span>
+        <button style={St.iconBtn} onClick={onClose} aria-label="Close"><Ic.x style={ic(18)}/></button></div>
       {children}
     </div>
   </div>;
@@ -1048,22 +1255,16 @@ function Modal({title,children,onClose,wide}){
 function Field({label,children}){
   return <div style={{flex:1,marginBottom:14}}><div style={St.fieldLabel}>{label}</div>{children}</div>;
 }
-
 function Contours(){
   return <svg style={St.contours} viewBox="0 0 400 800" preserveAspectRatio="xMidYMid slice" aria-hidden>
-    {[0,1,2,3,4,5,6,7].map(i=>(
-      <path key={i} fill="none" stroke="var(--sage)" strokeWidth="1"
-        d={`M-20 ${80+i*95} C 80 ${40+i*95}, 160 ${140+i*95}, 240 ${70+i*95} S 380 ${30+i*95}, 440 ${100+i*95}`}/>
-    ))}
+    {[0,1,2,3,4,5,6,7].map(i=>(<path key={i} fill="none" stroke="var(--sage)" strokeWidth="1"
+      d={`M-20 ${80+i*95} C 80 ${40+i*95}, 160 ${140+i*95}, 240 ${70+i*95} S 380 ${30+i*95}, 440 ${100+i*95}`}/>))}
   </svg>;
 }
 
 /* ============================================================
-   HELPERS + STYLES
+   STYLES
    ============================================================ */
-const ic=(n)=>({width:n,height:n,flexShrink:0});
-const fmt=(d)=>new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
-
 const St={
   app:{minHeight:"100dvh",background:"var(--night)",color:"var(--paper)",position:"relative",overflowX:"hidden"},
   contours:{position:"fixed",inset:0,width:"100%",height:"100%",opacity:.05,pointerEvents:"none",zIndex:0},
@@ -1076,50 +1277,60 @@ const St={
   logoMark:{width:40,height:40,borderRadius:11,background:"var(--ember)",display:"grid",placeItems:"center",flexShrink:0},
   brand:{fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:22,letterSpacing:1,lineHeight:1},
   tagline:{fontSize:10,letterSpacing:2.5,textTransform:"uppercase",color:"var(--sage)",marginTop:3},
-  profileBtn:{display:"flex",alignItems:"center",gap:8,background:"var(--pine)",border:"1px solid var(--line)",
-    borderRadius:12,padding:"6px 10px",cursor:"pointer"},
+  profileBtn:{display:"flex",alignItems:"center",gap:8,background:"var(--pine)",border:"1px solid var(--line)",borderRadius:12,padding:"6px 10px",cursor:"pointer"},
   modeDot:{width:8,height:8,borderRadius:8,flexShrink:0},
-  avatarSm:{width:26,height:26,borderRadius:8,background:"var(--mist)",display:"grid",placeItems:"center",
-    fontFamily:"'Oswald',sans-serif",fontWeight:700,color:"var(--paper)",fontSize:13},
+  avatarSm:{width:26,height:26,borderRadius:8,background:"var(--mist)",display:"grid",placeItems:"center",fontFamily:"'Oswald',sans-serif",fontWeight:700,color:"var(--paper)",fontSize:13},
+  linkBtn:{background:"none",border:"none",color:"var(--ember2)",cursor:"pointer",fontWeight:600,fontSize:13,padding:0,textDecoration:"underline"},
+  localBanner:{marginTop:18,padding:"10px 12px",background:"rgba(232,178,60,.08)",border:"1px solid rgba(232,178,60,.25)",borderRadius:10,fontSize:11.5,color:"var(--sage)",display:"flex",gap:8,alignItems:"flex-start",lineHeight:1.5},
 
-  sectionHead:{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,margin:"20px 0 20px",flexWrap:"wrap"},
+  sectionHead:{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,margin:"20px 0 18px",flexWrap:"wrap"},
   h1:{fontFamily:"'Oswald',sans-serif",fontSize:30,fontWeight:600,margin:0,letterSpacing:.5},
-  h2:{fontFamily:"'Oswald',sans-serif",fontSize:19,fontWeight:600,margin:"24px 0 12px",letterSpacing:.5},
+  h2:{fontFamily:"'Oswald',sans-serif",fontSize:19,fontWeight:600,margin:"0 0 12px",letterSpacing:.5},
   sub:{color:"var(--sage)",fontSize:13,margin:"4px 0 0",lineHeight:1.5},
   hintSm:{color:"var(--sage)",fontSize:11.5,marginTop:8,lineHeight:1.5,opacity:.85},
+  miniLabel:{fontSize:11,color:"var(--sage)",textTransform:"uppercase",letterSpacing:1,fontWeight:600},
+
+  mapHead:{display:"flex",alignItems:"center",gap:7,fontFamily:"'Oswald',sans-serif",fontSize:14,fontWeight:600,letterSpacing:.5,marginBottom:10},
+  mapHome:{height:200,borderRadius:14,overflow:"hidden",border:"1px solid var(--line)"},
 
   yearLabel:{display:"flex",alignItems:"center",gap:12,marginBottom:14},
   yearNum:{fontFamily:"'Oswald',sans-serif",fontSize:14,fontWeight:700,color:"var(--ember2)",letterSpacing:2},
   yearLine:{flex:1,height:1,background:"var(--line)"},
 
   tripGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:14},
-  card:{position:"relative",textAlign:"left",background:"var(--pine)",border:"1px solid var(--line)",
-    borderRadius:16,overflow:"hidden",cursor:"pointer",color:"var(--paper)",padding:0,display:"flex",flexDirection:"column"},
+  card:{position:"relative",textAlign:"left",background:"var(--pine)",border:"1px solid var(--line)",borderRadius:16,overflow:"hidden",cursor:"pointer",color:"var(--paper)",padding:0,display:"flex",flexDirection:"column"},
   card2:{background:"var(--pine)",border:"1px solid var(--line)",borderRadius:18},
   cardCover:{height:120,background:"var(--moss) center/cover",display:"grid",placeItems:"center",position:"relative",backgroundSize:"cover",backgroundPosition:"center"},
   coverGrad:{position:"absolute",inset:0,background:"linear-gradient(to top,var(--pine),transparent 60%)"},
-  cardDate:{position:"absolute",top:10,left:10,background:"rgba(15,26,23,.82)",color:"var(--paper)",
-    fontSize:11,fontWeight:600,padding:"3px 9px",borderRadius:8,fontFamily:"'Oswald',sans-serif",letterSpacing:.5},
+  cardDate:{position:"absolute",top:10,left:10,background:"rgba(15,26,23,.82)",color:"var(--paper)",fontSize:11,fontWeight:600,padding:"3px 9px",borderRadius:8,fontFamily:"'Oswald',sans-serif",letterSpacing:.5},
   cardBody:{padding:"12px 14px 14px"},
   cardTitle:{fontFamily:"'Oswald',sans-serif",fontSize:17,fontWeight:600,lineHeight:1.15},
   cardLoc:{display:"flex",alignItems:"center",gap:4,color:"var(--sage)",fontSize:12,margin:"5px 0 10px"},
   cardStats:{display:"flex",gap:12,fontSize:12,opacity:.85,alignItems:"center"},
   cardArrow:{position:"absolute",right:12,bottom:14,color:"var(--mist)"},
 
+  // trip shell with bottom nav
+  tripWrap:{display:"flex",flexDirection:"column",height:"100dvh"},
+  tripScroll:{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",maxWidth:760,margin:"0 auto",width:"100%",padding:"0 18px"},
+  tripBody:{paddingBottom:24},
   backBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"none",border:"none",color:"var(--sage)",cursor:"pointer",fontSize:13,padding:"14px 0 8px",fontWeight:500},
-  detailHero:{height:180,borderRadius:18,background:"var(--moss) center/cover",position:"relative",display:"flex",alignItems:"flex-end",overflow:"hidden",backgroundSize:"cover",backgroundPosition:"center"},
+  detailHero:{height:170,borderRadius:18,background:"var(--moss) center/cover",position:"relative",display:"flex",alignItems:"flex-end",overflow:"hidden",backgroundSize:"cover",backgroundPosition:"center",marginBottom:18},
   heroGrad:{position:"absolute",inset:0,background:"linear-gradient(to top,var(--night) 5%,transparent 70%)"},
   heroInner:{position:"relative",padding:"18px 20px",width:"100%"},
   heroDates:{display:"inline-flex",alignItems:"center",gap:6,color:"var(--gold)",fontSize:12,fontWeight:600,marginBottom:6},
-  heroTitle:{fontFamily:"'Oswald',sans-serif",fontSize:28,fontWeight:700,margin:0,letterSpacing:.5},
+  heroTitle:{fontFamily:"'Oswald',sans-serif",fontSize:26,fontWeight:700,margin:0,letterSpacing:.5},
   heroLoc:{display:"flex",alignItems:"center",gap:5,opacity:.85,fontSize:13,marginTop:4},
 
-  tabBar:{display:"flex",gap:6,overflowX:"auto",padding:"16px 0",borderBottom:"1px solid var(--line)",marginBottom:18,WebkitOverflowScrolling:"touch"},
-  tab:{display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap",background:"none",border:"1px solid var(--line)",color:"var(--sage)",padding:"8px 13px",borderRadius:10,cursor:"pointer",fontSize:13,fontWeight:500},
-  tabOn:{background:"var(--ember)",borderColor:"var(--ember)",color:"var(--night)",fontWeight:600},
-  pane:{},
+  tabBarBottom:{display:"flex",justifyContent:"space-around",alignItems:"stretch",
+    background:"rgba(22,42,36,0.94)",backdropFilter:"blur(12px)",borderTop:"1px solid var(--line)",
+    padding:"8px 6px calc(env(safe-area-inset-bottom) + 8px)",position:"sticky",bottom:0,zIndex:30},
+  bottomTab:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",
+    color:"var(--sage)",cursor:"pointer",padding:"6px 4px",borderRadius:12},
+  bottomTabOn:{color:"var(--ember2)"},
+  bottomTabLabel:{fontSize:10.5,fontWeight:600,letterSpacing:.3},
 
-  statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16},
+  pane:{},
+  statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14},
   statCard:{background:"var(--pine)",border:"1px solid var(--line)",borderRadius:13,padding:"14px 12px",textAlign:"center"},
   statValue:{fontFamily:"'Oswald',sans-serif",fontSize:24,fontWeight:700,margin:"6px 0 2px"},
   statLabel:{fontSize:11,color:"var(--sage)",textTransform:"uppercase",letterSpacing:.5},
@@ -1132,33 +1343,52 @@ const St={
   taskDot:{width:18,height:18,borderRadius:5,border:"1.5px solid var(--line)",display:"grid",placeItems:"center",flexShrink:0},
   notes:{width:"100%",minHeight:88,background:"var(--night)",border:"1px solid var(--line)",borderRadius:10,color:"var(--paper)",padding:12,fontSize:13.5,resize:"vertical",lineHeight:1.5},
 
-  shareCard:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,
-    background:"linear-gradient(135deg,var(--moss),var(--pine))",border:"1px solid var(--line)",
-    borderRadius:14,padding:"14px 16px",marginBottom:14},
+  shareCard:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,background:"linear-gradient(135deg,var(--moss),var(--pine))",border:"1px solid var(--line)",borderRadius:14,padding:"14px 16px",marginBottom:14},
   shareLabel:{fontSize:11,color:"var(--sage)",textTransform:"uppercase",letterSpacing:1},
   shareCode:{fontFamily:"'Oswald',sans-serif",fontSize:26,fontWeight:700,letterSpacing:5,color:"var(--gold)",margin:"2px 0"},
   iconChip:{width:40,height:40,borderRadius:10,background:"var(--night)",border:"1px solid var(--line)",color:"var(--sage)",display:"grid",placeItems:"center",cursor:"pointer"},
 
-  listHead:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,gap:10,flexWrap:"wrap"},
+  listHead:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:10,flexWrap:"wrap"},
   itemRow:{display:"flex",alignItems:"center",gap:12,background:"var(--pine)",border:"1px solid var(--line)",borderRadius:12,padding:"12px 14px"},
   itemTitle:{fontSize:14.5,fontWeight:600},
   itemMeta:{fontSize:12,color:"var(--sage)",marginTop:2},
   dayChip:{fontFamily:"'Oswald',sans-serif",fontSize:12,fontWeight:700,color:"var(--ember2)",background:"rgba(232,104,44,.12)",padding:"5px 9px",borderRadius:8,minWidth:42,textAlign:"center"},
-  avatar:{width:34,height:34,borderRadius:9,background:"var(--mist)",display:"grid",placeItems:"center",fontFamily:"'Oswald',sans-serif",fontWeight:700,color:"var(--paper)",fontSize:15,flexShrink:0},
+  avatar:{width:38,height:38,borderRadius:10,background:"var(--mist)",display:"grid",placeItems:"center",fontFamily:"'Oswald',sans-serif",fontWeight:700,color:"var(--paper)",fontSize:16,flexShrink:0},
   checkBtn:{width:24,height:24,borderRadius:7,border:"1.5px solid var(--mist)",background:"none",cursor:"pointer",display:"grid",placeItems:"center",flexShrink:0},
   checkOn:{background:"var(--ember)",borderColor:"var(--ember)"},
   navBtn:{width:34,height:34,borderRadius:9,background:"var(--moss)",display:"grid",placeItems:"center",color:"var(--sage)",textDecoration:"none",flexShrink:0},
   netPill:{fontSize:12,fontWeight:600,padding:"5px 10px",borderRadius:8,whiteSpace:"nowrap"},
+  dirBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"var(--moss)",color:"var(--paper)",border:"1px solid var(--line)",borderRadius:10,padding:"9px 13px",fontSize:13,fontWeight:600,textDecoration:"none"},
 
-  empty:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,textAlign:"center",color:"var(--sage)",fontSize:13,padding:"30px 20px",border:"1px dashed var(--line)",borderRadius:14,marginBottom:14,lineHeight:1.5},
+  // member cards
+  memberCard:{background:"var(--pine)",border:"1px solid var(--line)",borderRadius:14,padding:14},
+  memberAvatarImg:{width:38,height:38,borderRadius:10,objectFit:"cover",flexShrink:0},
+  memberMeta:{fontSize:12,color:"var(--sage)",margin:"8px 0 2px"},
+  memberRow:{display:"flex",alignItems:"center",gap:8,marginTop:8,fontSize:13},
+  youTag:{fontSize:10,background:"var(--moss)",color:"var(--sage)",padding:"1px 6px",borderRadius:6,marginLeft:6,fontWeight:600,verticalAlign:"middle"},
+  inlineInput:{flex:1,background:"var(--night)",border:"1px solid var(--line)",borderRadius:8,color:"var(--paper)",padding:"7px 10px",fontSize:13},
+  uploadChip:{display:"inline-flex",alignItems:"center",gap:4,background:"var(--moss)",color:"var(--paper)",borderRadius:8,padding:"5px 10px",fontSize:12,fontWeight:600,cursor:"pointer"},
+  photoStrip:{display:"flex",gap:8,overflowX:"auto",marginTop:8,paddingBottom:4},
+  photoThumb:{position:"relative",flexShrink:0},
+  photoImg:{width:72,height:72,borderRadius:10,objectFit:"cover",display:"block"},
+  photoDel:{position:"absolute",top:4,right:4,width:20,height:20,borderRadius:6,background:"rgba(15,26,23,.8)",border:"none",color:"var(--paper)",display:"grid",placeItems:"center",cursor:"pointer"},
+  coverPreview:{width:"100%",height:140,objectFit:"cover",borderRadius:10,display:"block"},
 
-  mapBig:{height:340,borderRadius:12,overflow:"hidden",border:"1px solid var(--line)"},
+  // meals
+  mealCard:{background:"var(--pine)",border:"1px solid var(--line)",borderRadius:14,padding:14},
+  expandRow:{display:"flex",alignItems:"center",gap:7,width:"100%",background:"var(--night)",border:"1px solid var(--line)",borderRadius:10,padding:"9px 12px",color:"var(--sage)",fontSize:12.5,cursor:"pointer",marginTop:10},
+  itemsBox:{marginTop:10,display:"grid",gap:6},
+  shopRow:{display:"flex",alignItems:"center",gap:10},
+  shopMeal:{fontSize:11,color:"var(--sage)",background:"var(--moss)",padding:"2px 8px",borderRadius:6},
+
+  empty:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,textAlign:"center",color:"var(--sage)",fontSize:13,padding:"28px 20px",border:"1px dashed var(--line)",borderRadius:14,marginBottom:14,lineHeight:1.5},
+  mapBig:{height:300,borderRadius:12,overflow:"hidden",border:"1px solid var(--line)"},
   mapPick:{height:360,borderRadius:12,overflow:"hidden",border:"1px solid var(--line)",marginBottom:14},
 
   primaryBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"var(--ember)",color:"var(--night)",border:"none",borderRadius:11,padding:"10px 16px",fontSize:14,fontWeight:600,cursor:"pointer"},
   ghostBtn:{background:"none",border:"1px solid var(--line)",color:"var(--sage)",borderRadius:11,padding:"10px 16px",fontSize:14,cursor:"pointer",fontWeight:500},
   smallBtn:{display:"inline-flex",alignItems:"center",gap:5,background:"var(--moss)",color:"var(--paper)",border:"none",borderRadius:10,padding:"9px 13px",fontSize:13,fontWeight:600,cursor:"pointer"},
-  dangerBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"none",border:"1px solid rgba(217,83,79,.4)",color:"#E78A87",borderRadius:11,padding:"10px 16px",fontSize:13.5,fontWeight:600,cursor:"pointer",marginTop:6},
+  dangerBtn:{display:"inline-flex",alignItems:"center",gap:6,background:"none",border:"1px solid rgba(217,83,79,.4)",color:"#E78A87",borderRadius:11,padding:"10px 16px",fontSize:13.5,fontWeight:600,cursor:"pointer"},
   iconBtn:{background:"none",border:"none",color:"var(--mist)",cursor:"pointer",display:"grid",placeItems:"center",padding:4},
 
   overlay:{position:"fixed",inset:0,background:"rgba(8,14,12,.72)",backdropFilter:"blur(3px)",display:"grid",placeItems:"center",zIndex:50,padding:18},
@@ -1175,9 +1405,9 @@ const St={
 
   modeBadge:{display:"inline-flex",alignItems:"center",gap:5,fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:8},
   ol:{margin:"4px 0 0",paddingLeft:18,color:"var(--paper)",fontSize:13.5,lineHeight:1.7},
-  errText:{color:"#E78A87",fontSize:12.5,marginTop:8},
+  errText:{color:"#E78A87",fontSize:12.5,marginTop:4,marginBottom:4},
 
-  toast:{position:"fixed",bottom:"calc(env(safe-area-inset-bottom) + 22px)",left:"50%",transform:"translateX(-50%)",
+  toast:{position:"fixed",bottom:"calc(env(safe-area-inset-bottom) + 90px)",left:"50%",transform:"translateX(-50%)",
     background:"var(--pine)",border:"1px solid var(--ember)",borderRadius:12,padding:"11px 18px",fontSize:13.5,fontWeight:600,
     display:"flex",alignItems:"center",gap:8,zIndex:60,boxShadow:"0 8px 30px rgba(0,0,0,.4)"},
 };

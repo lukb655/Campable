@@ -1,7 +1,7 @@
 {
-  "name": "TrailLog — camping plans",
-  "short_name": "TrailLog",
-  "description": "Plan camping trips with your crew: meals, trails, costs, all shared live.",
+  "name": "Campable — shared camping plans",
+  "short_name": "Campable",
+  "description": "Plan camping trips with your crew: meals, trails, costs, maps — all shared live.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0F1A17",
