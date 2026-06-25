@@ -327,6 +327,7 @@ const Ic={
   cart:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 2-1.58l1.65-7.42H5.12"/></svg>,
   logout:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>,
   sos:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7v6c0 5 3.8 8.5 10 11 6.2-2.5 10-6 10-11V7L12 2z"/><path d="M12 8v4M12 16h.01"/></svg>,
+  gear:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
 };
 const ic=(n)=>({width:n,height:n,flexShrink:0});
 const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
@@ -623,11 +624,13 @@ function TripCard({trip,onOpen}){
 function TripShell({trip,me,flash,onBack}){
   const [tab,setTab]=useState("plan");
   const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
+  const isAdmin=trip.ownerId===me.id;
   const tabs=[
     {id:"plan",label:"Overview",icon:Ic.pack},
     {id:"crew",label:"Crew",icon:Ic.users},
     {id:"meals",label:"Meals",icon:Ic.food},
     {id:"map",label:"Map",icon:Ic.map},
+    ...(isAdmin?[{id:"settings",label:"Settings",icon:Ic.gear}]:[]),
   ];
   return (
     <div style={St.tripWrap}>
@@ -643,10 +646,11 @@ function TripShell({trip,me,flash,onBack}){
         </div>
 
         <div style={St.tripBody}>
-          {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
-          {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash}/>}
+          {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin}/>}
+          {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>}
           {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
           {tab==="map" && <MapTab trip={trip} patch={patch} flash={flash}/>}
+          {tab==="settings" && isAdmin && <TripSettingsTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
         </div>
       </div>
 
@@ -664,10 +668,9 @@ function TripShell({trip,me,flash,onBack}){
 }
 
 /* ---------------- OVERVIEW ---------------- */
-function OverviewTab({trip,me,patch,flash,onBack}){
+function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
   const miles=(trip.trails||[]).reduce((a,t)=>a+(+t.miles||0),0);
   const cost=(trip.meals||[]).reduce((a,m)=>a+(+m.cost||0),0);
-  const isOwner=trip.ownerId===me.id;
   const tasks=[
     ["Crew added",(trip.members||[]).length>=2],
     ["Campsite pinned",!!(trip.campLat&&trip.campLng)],
@@ -676,22 +679,26 @@ function OverviewTab({trip,me,patch,flash,onBack}){
   ];
   const pct=Math.round(tasks.filter(t=>t[1]).length/tasks.length*100);
 
-  const removeTrip=async()=>{
-    if(!confirm(isOwner?"Delete this trip for everyone? This can't be undone.":"Leave this trip?"))return;
-    await Data.deleteTrip(trip.id); flash(isOwner?"Trip deleted":"Left trip"); onBack();
+  const leaveTrip=async()=>{
+    if(!confirm("Leave this trip?"))return;
+    // Remove self from members
+    const members=(trip.members||[]).filter(m=>m.id!==me.id);
+    const memberIds=(trip.memberIds||[]).filter(id=>id!==me.id);
+    await Data.updateTrip(trip.id,{members,memberIds});
+    flash("Left trip"); onBack();
   };
 
   return (
     <div style={St.pane}>
-      <ShareCard trip={trip} flash={flash}/>
-
-      <CampsiteCard trip={trip} patch={patch} flash={flash}/>
-
       <div style={St.statRow}>
         <Stat icon={Ic.foot} label="Total miles" value={miles.toFixed(1)}/>
         <Stat icon={Ic.food} label="Meals" value={(trip.meals||[]).length}/>
         <Stat icon={Ic.dollar} label="Food cost" value={`$${cost.toFixed(0)}`}/>
       </div>
+
+      <GroupGallery trip={trip} patch={patch} flash={flash}/>
+
+      <DuesSection trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>
 
       <div style={St.block}>
         <div style={St.blockHead}><span>Trip readiness</span><span style={{color:"var(--ember2)"}}>{pct}%</span></div>
@@ -715,13 +722,10 @@ function OverviewTab({trip,me,patch,flash,onBack}){
         <div style={St.hintSm}>Saves when you tap away.</div>
       </div>
 
-      <ImagePicker label="Cover photo" current={trip.cover}
-        onPicked={dataUrl=>{patch({cover:dataUrl});flash("Cover updated");}}
-        onClear={()=>patch({cover:""})} flash={flash}/>
-
-      <button style={St.dangerBtn} onClick={removeTrip}>
-        <Ic.trash style={ic(15)}/> {isOwner?"Delete trip":"Leave trip"}
-      </button>
+      {!isAdmin &&
+        <button style={St.dangerBtn} onClick={leaveTrip}>
+          <Ic.logout style={ic(15)}/> Leave trip
+        </button>}
     </div>
   );
 }
@@ -760,7 +764,7 @@ function CampsiteCard({trip,patch,flash}){
 }
 
 /* ---------------- CREW (who owes + photos + items + emergency) ---------------- */
-function CrewTab({trip,me,patch,flash}){
+function CrewTab({trip,me,patch,flash,isAdmin}){
   const members=trip.members||[]; const meals=trip.meals||[]; const photos=trip.photos||[];
 
   // cost tally
@@ -798,7 +802,7 @@ function CrewTab({trip,me,patch,flash}){
 
   return (
     <div style={St.pane}>
-      <ShareCard trip={trip} flash={flash}/>
+      {(isAdmin||trip.allowCrewShareCode) && <ShareCard trip={trip} flash={flash}/>}
 
       <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
         <input style={St.input} placeholder="Add someone by name" value={addName}
@@ -1022,6 +1026,226 @@ function ShoppingList({items,onToggle,onClose}){
           </div>
         </div>}
     </Modal>
+  );
+}
+
+/* ---------------- TRIP SETTINGS (admin only) ---------------- */
+function TripSettingsTab({trip,me,patch,flash,onBack}){
+  const [name,setName]=useState(trip.name);
+  const [loc,setLoc]=useState(trip.location||"");
+  const [start,setStart]=useState(trip.start||"");
+  const [end,setEnd]=useState(trip.end||"");
+
+  const saveDetails=()=>{
+    if(!name.trim()){flash("Trip name required");return;}
+    patch({name:name.trim(),location:loc.trim(),start,end}); flash("Trip details saved");
+  };
+
+  const copyCode=async()=>{try{await navigator.clipboard.writeText(trip.code);flash("Code copied");}catch{flash(trip.code);}};
+  const shareCode=async()=>{
+    const text=`Join "${trip.name}" on Campable. Tap Join and enter code: ${trip.code}`;
+    if(navigator.share){try{await navigator.share({title:"Campable",text});return;}catch{}}
+    copyCode();
+  };
+
+  const deleteTrip=async()=>{
+    if(!confirm("Delete this trip for everyone? This can't be undone."))return;
+    await Data.deleteTrip(trip.id); flash("Trip deleted"); onBack();
+  };
+
+  return (
+    <div style={St.pane}>
+      {/* Trip Details */}
+      <div style={St.block}>
+        <div style={St.blockHead}><span>Trip Details</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
+        <Field label="Trip name"><input style={St.input} value={name} onChange={e=>setName(e.target.value)}/></Field>
+        <Field label="Location"><input style={St.input} value={loc} placeholder="Wilderness area, state" onChange={e=>setLoc(e.target.value)}/></Field>
+        <div style={{display:"flex",gap:10}}>
+          <Field label="Start"><input type="date" style={St.input} value={start} onChange={e=>setStart(e.target.value)}/></Field>
+          <Field label="End"><input type="date" style={St.input} value={end} onChange={e=>setEnd(e.target.value)}/></Field>
+        </div>
+        <button style={St.smallBtn} onClick={saveDetails}><Ic.check style={ic(14)}/> Save details</button>
+      </div>
+
+      {/* Campsite */}
+      <CampsiteCard trip={trip} patch={patch} flash={flash}/>
+
+      {/* Cover Photo */}
+      <ImagePicker label="Cover photo" current={trip.cover}
+        onPicked={dataUrl=>{patch({cover:dataUrl});flash("Cover updated");}}
+        onClear={()=>patch({cover:""})} flash={flash}/>
+
+      {/* Invite Code */}
+      <div style={St.block}>
+        <div style={St.blockHead}><span>Invite Code</span><Ic.share style={{...ic(13),color:"var(--sage)"}}/></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div>
+            <div style={St.shareLabel}>Crew invite code</div>
+            <div style={St.shareCode}>{trip.code}</div>
+            <div style={St.hintSm}>Share this with people you want to join the trip.</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button style={St.iconChip} onClick={copyCode} aria-label="Copy"><Ic.copy style={ic(16)}/></button>
+            <button style={St.iconChip} onClick={shareCode} aria-label="Share"><Ic.share style={ic(16)}/></button>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--night)",borderRadius:10,padding:"10px 12px"}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>Let crew share code</div>
+            <div style={St.hintSm}>Show the invite code to all members in the Crew tab.</div>
+          </div>
+          <button style={{...St.toggle,...(trip.allowCrewShareCode?St.toggleOn:{})}}
+            onClick={()=>patch({allowCrewShareCode:!trip.allowCrewShareCode})}>
+            <span style={{...St.toggleKnob,...(trip.allowCrewShareCode?St.toggleKnobOn:{})}}/>
+            {trip.allowCrewShareCode?"On":"Off"}
+          </button>
+        </div>
+      </div>
+
+      {/* Dues Settings */}
+      <div style={St.block}>
+        <div style={St.blockHead}><span>Dues</span><Ic.dollar style={{...ic(13),color:"var(--sage)"}}/></div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:trip.duesEnabled?14:0}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>Enable trip dues</div>
+            <div style={St.hintSm}>Collect a set amount from each crew member.</div>
+          </div>
+          <button style={{...St.toggle,...(trip.duesEnabled?St.toggleOn:{})}}
+            onClick={()=>patch({duesEnabled:!trip.duesEnabled})}>
+            <span style={{...St.toggleKnob,...(trip.duesEnabled?St.toggleKnobOn:{})}}/>
+            {trip.duesEnabled?"On":"Off"}
+          </button>
+        </div>
+        {trip.duesEnabled && <>
+          <Field label="Amount per person ($)">
+            <input style={St.input} type="number" min="0" step="0.01"
+              value={trip.duesAmount||""} placeholder="0.00"
+              onChange={e=>patch({duesAmount:+e.target.value})}/>
+          </Field>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--night)",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>Admin must confirm payments</div>
+              <div style={St.hintSm}>When a member marks dues paid, you confirm it in real life first.</div>
+            </div>
+            <button style={{...St.toggle,...(trip.requireDuesConfirm?St.toggleOn:{})}}
+              onClick={()=>patch({requireDuesConfirm:!trip.requireDuesConfirm})}>
+              <span style={{...St.toggleKnob,...(trip.requireDuesConfirm?St.toggleKnobOn:{})}}/>
+              {trip.requireDuesConfirm?"On":"Off"}
+            </button>
+          </div>
+          <div style={St.miniLabel}>Member dues status</div>
+          <div style={{display:"grid",gap:8,marginTop:8}}>
+            {(trip.members||[]).map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,background:"var(--night)",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13.5,fontWeight:600}}>{m.name}{m.id===me.id?" (you)":""}</div>
+                  <div style={{fontSize:12,marginTop:2,
+                    color:m.duesPaid?"#5BBF8A":m.duesPending?"var(--gold)":"var(--sage)"}}>
+                    {m.duesPaid?"✓ Confirmed paid":m.duesPending?"⏳ Pending confirmation":"Not paid"}
+                  </div>
+                </div>
+                {m.duesPending&&!m.duesPaid&&
+                  <button style={{...St.smallBtn,padding:"5px 10px",fontSize:12}} onClick={()=>{
+                    patch({members:(trip.members||[]).map(x=>x.id===m.id?{...x,duesPaid:true,duesPending:false}:x)});
+                    flash(`${m.name}'s dues confirmed`);
+                  }}><Ic.check style={ic(13)}/> Confirm</button>}
+                {m.duesPaid&&
+                  <button style={St.iconBtn} title="Reset dues" onClick={()=>{
+                    patch({members:(trip.members||[]).map(x=>x.id===m.id?{...x,duesPaid:false,duesPending:false}:x)});
+                    flash("Dues reset");
+                  }}><Ic.x style={ic(14)}/></button>}
+              </div>
+            ))}
+          </div>
+        </>}
+      </div>
+
+      <button style={St.dangerBtn} onClick={deleteTrip}>
+        <Ic.trash style={ic(15)}/> Delete trip
+      </button>
+    </div>
+  );
+}
+
+/* ---------------- GROUP GALLERY ---------------- */
+function GroupGallery({trip,patch,flash}){
+  const photos=trip.photos||[];
+  const members=trip.members||[];
+  const getName=id=>members.find(m=>m.id===id)?.name||"";
+  const [view,setView]=useState(null);
+
+  if(photos.length===0) return null;
+
+  const delPhoto=pid=>{patch({photos:photos.filter(p=>p.id!==pid)});flash("Photo removed");setView(null);};
+
+  return (
+    <div style={St.block}>
+      <div style={St.blockHead}>
+        <span>Group Gallery</span>
+        <span style={{...St.miniLabel,color:"var(--sage)"}}>{photos.length} photo{photos.length!==1?"s":""}</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+        {[...photos].reverse().map(p=>(
+          <div key={p.id} style={{paddingBottom:"100%",position:"relative",borderRadius:10,overflow:"hidden",cursor:"pointer"}}
+            onClick={()=>setView(p)}>
+            <img src={p.data} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+          </div>
+        ))}
+      </div>
+      {view&&(
+        <div style={St.overlay} onClick={()=>setView(null)}>
+          <div style={{position:"relative",maxWidth:500,width:"100%",padding:"0 4px"}} onClick={e=>e.stopPropagation()}>
+            <img src={view.data} alt="" style={{width:"100%",borderRadius:14,display:"block"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 2px 0"}}>
+              <span style={{fontSize:12,color:"var(--sage)"}}>by {getName(view.by)}</span>
+              <button style={St.dangerBtn} onClick={()=>delPhoto(view.id)}><Ic.trash style={ic(14)}/> Remove</button>
+            </div>
+            <button style={{position:"absolute",top:8,right:12,background:"rgba(0,0,0,.6)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer"}}
+              onClick={()=>setView(null)}><Ic.x style={{...ic(18),color:"var(--paper)"}}/></button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- DUES SECTION (overview) ---------------- */
+function DuesSection({trip,me,patch,flash,isAdmin}){
+  if(!trip.duesEnabled) return null;
+  const myMember=(trip.members||[]).find(m=>m.id===me.id);
+  if(!myMember) return null;
+
+  const markPaid=()=>{
+    const paid=!trip.requireDuesConfirm;
+    patch({members:(trip.members||[]).map(m=>
+      m.id===me.id?{...m,duesPaid:paid,duesPending:!paid}:m
+    )});
+    flash(trip.requireDuesConfirm?"Payment submitted — awaiting admin confirmation":"Dues marked as paid");
+  };
+
+  return (
+    <div style={St.block}>
+      <div style={St.blockHead}><span>Trip Dues</span><Ic.dollar style={{...ic(13),color:"var(--sage)"}}/></div>
+      {trip.duesAmount>0&&(
+        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,fontWeight:700,color:"var(--gold)",marginBottom:12}}>
+          ${(+trip.duesAmount).toFixed(2)}
+          <span style={{fontSize:13,fontFamily:"'Inter',sans-serif",color:"var(--sage)",fontWeight:400}}> per person</span>
+        </div>
+      )}
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        {myMember.duesPaid
+          ?<div style={{color:"#5BBF8A",fontSize:13.5,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+            <Ic.check style={ic(16)}/> Your dues are confirmed paid</div>
+          :myMember.duesPending
+            ?<div style={{color:"var(--gold)",fontSize:13.5,fontWeight:600}}>⏳ Payment pending confirmation</div>
+            :<button style={St.primaryBtn} onClick={markPaid}><Ic.dollar style={ic(15)}/> Mark dues as paid</button>}
+      </div>
+      {isAdmin&&(trip.members||[]).some(m=>m.duesPending&&!m.duesPaid)&&(
+        <div style={{marginTop:12,padding:"10px 12px",background:"rgba(232,178,60,.08)",border:"1px solid rgba(232,178,60,.25)",borderRadius:10,fontSize:12.5,color:"var(--gold)"}}>
+          {(trip.members||[]).filter(m=>m.duesPending&&!m.duesPaid).length} pending confirmation — confirm in Settings tab.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1481,6 +1705,9 @@ const St={
   modeBadge:{display:"inline-flex",alignItems:"center",gap:5,fontSize:11.5,fontWeight:600,padding:"4px 9px",borderRadius:8},
   ol:{margin:"4px 0 0",paddingLeft:18,color:"var(--paper)",fontSize:13.5,lineHeight:1.7},
   errText:{color:"#E78A87",fontSize:12.5,marginTop:4,marginBottom:4},
+
+  // Gallery
+  galleryGrid:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5,marginTop:4},
 
   toast:{position:"fixed",bottom:"calc(env(safe-area-inset-bottom) + 90px)",left:"50%",transform:"translateX(-50%)",
     background:"var(--pine)",border:"1px solid var(--ember)",borderRadius:12,padding:"11px 18px",fontSize:13.5,fontWeight:600,
