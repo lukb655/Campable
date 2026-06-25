@@ -55,23 +55,7 @@ a{color:inherit}
 <script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js" onerror="window._FB_LOAD_ERR=true"></script>
 <script crossorigin src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" onerror="window._FB_LOAD_ERR=true"></script>
 
-<!-- ============================================================= -->
-<!--  PASTE YOUR FIREBASE CONFIG HERE (see SETUP-GUIDE).            -->
-<!--  Until you do, the app runs in LOCAL DEMO mode (accounts and   -->
-<!--  trips stay on this one device).                               -->
-<!-- ============================================================= -->
-<script>
-window.FIREBASE_CONFIG = {
-   apiKey: "AIzaSyCjFu3jgebJ2mcwh1Km_S_pJldhjrdT5tw",
-  authDomain: "campable-2b014.firebaseapp.com",
-  projectId: "campable-2b014",
-  storageBucket: "campable-2b014.firebasestorage.app",
-  messagingSenderId: "38258867267",
-  appId: "1:38258867267:web:d0d58c9251e1eaf73ea8f6",
-  measurementId: "G-8QJBF3JNPF"
-};
-</script>
-<!-- ============================================================= -->
+<!-- Firebase config is loaded at runtime from /api/config — never hardcoded here. -->
 
 <script>
   Babel.registerPreset("react-classic", {
@@ -83,26 +67,37 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 /* ============================================================
    DATA LAYER — Firebase (email/password + Firestore) if config
-   present, else a local-device fallback that mimics the same API.
+   loads from /api/config, else a local-device fallback.
    ============================================================ */
-// HAS_FB is true only when: config has a projectId AND the Firebase scripts
-// actually loaded (no network error) AND initialization succeeds.
 let HAS_FB = false;
 let db = null, auth = null;
-try {
-  const cfg = window.FIREBASE_CONFIG || {};
-  if (cfg.projectId && typeof firebase !== "undefined" && !window._FB_LOAD_ERR) {
-    firebase.initializeApp(cfg);
-    db   = firebase.firestore();
-    auth = firebase.auth();
-    // setPersistence keeps the user logged in across browser restarts.
-    // "local" is a plain string on the compat SDK — not a constant path.
-    auth.setPersistence("local").catch(() => {});
-    HAS_FB = true;
+let _fbInitDone = false;
+
+// Fetch config once at startup — resolves before Auth.init runs
+const _configReady = fetch('/api/config')
+  .then(r => { if (!r.ok) throw new Error('config ' + r.status); return r.json(); })
+  .then(cfg => { window.FIREBASE_CONFIG = cfg; })
+  .catch(e => {
+    console.warn('Config fetch failed — local mode only.', e.message);
+    window.FIREBASE_CONFIG = {};
+  });
+
+function _initFirebase() {
+  if (_fbInitDone) return;
+  _fbInitDone = true;
+  try {
+    const cfg = window.FIREBASE_CONFIG || {};
+    if (cfg.projectId && typeof firebase !== "undefined" && !window._FB_LOAD_ERR) {
+      if (!firebase.apps.length) firebase.initializeApp(cfg);
+      db   = firebase.firestore();
+      auth = firebase.auth();
+      auth.setPersistence("local").catch(() => {});
+      HAS_FB = true;
+    }
+  } catch(e) {
+    console.warn("Firebase init failed — local mode.", e.message);
+    db = null; auth = null; HAS_FB = false;
   }
-} catch (e) {
-  console.warn("Firebase init failed — running in local mode.", e.message);
-  db = null; auth = null; HAS_FB = false;
 }
 
 const uid=()=>Math.random().toString(36).slice(2,10);
@@ -122,6 +117,9 @@ function weakHash(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCod
 const Auth = {
   current:null,
   async init(onUser){
+    // Wait for /api/config to load, then initialise Firebase once
+    try { await _configReady; } catch {}
+    _initFirebase();
     if(HAS_FB){
       // Safety net: if Firebase auth doesn't respond within 8 seconds,
       // fall back to treating the user as logged out rather than hanging.
