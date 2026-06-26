@@ -691,6 +691,7 @@ function TripShell({trip,me,flash,onBack,initialTab}){
     {id:"plan",label:"Overview",icon:Ic.pack},
     {id:"crew",label:"Crew",icon:Ic.users},
     {id:"meals",label:"Meals",icon:Ic.food},
+    {id:"costs",label:"Costs",icon:Ic.dollar},
     {id:"itinerary",label:"Itinerary",icon:Ic.cal},
     ...(isAdmin?[{id:"settings",label:"Settings",icon:Ic.gear}]:[]),
   ];
@@ -711,6 +712,7 @@ function TripShell({trip,me,flash,onBack,initialTab}){
           {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin}/>}
           {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>}
           {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
+          {tab==="costs" && <CostsTab trip={trip} patch={patch} flash={flash}/>}
           {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash}/>}
           {tab==="settings" && isAdmin && <TripSettingsTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
         </div>
@@ -1067,6 +1069,115 @@ function ShoppingList({items,onToggle,onClose}){
           </div>
         </div>}
     </Modal>
+  );
+}
+
+/* ---------------- COSTS (itemized shared expenses) ---------------- */
+function CostsTab({trip,patch,flash}){
+  const expenses=trip.expenses||[];
+  const members=trip.members||[];
+  const n=members.length||1;
+  const total=expenses.reduce((a,e)=>a+(+e.amount||0),0);
+
+  const [adding,setAdding]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [formName,setFormName]=useState("");
+  const [formAmt,setFormAmt]=useState("");
+
+  const openAdd=()=>{setFormName("");setFormAmt("");setAdding(true);setEditId(null);};
+  const openEdit=(e)=>{setFormName(e.name);setFormAmt(String(e.amount));setEditId(e.id);setAdding(false);};
+  const cancelForm=()=>{setAdding(false);setEditId(null);};
+
+  const saveAdd=()=>{
+    if(!formName.trim()||!formAmt)return;
+    patch({expenses:[...expenses,{id:uid(),name:formName.trim(),amount:+formAmt}]});
+    setAdding(false);setFormName("");setFormAmt("");flash("Expense added");
+  };
+  const saveEdit=()=>{
+    if(!formName.trim()||!formAmt)return;
+    patch({expenses:expenses.map(e=>e.id===editId?{...e,name:formName.trim(),amount:+formAmt}:e)});
+    setEditId(null);flash("Updated");
+  };
+  const del=(id)=>{patch({expenses:expenses.filter(e=>e.id!==id)});flash("Removed");};
+
+  const expenseForm=(onSave,label)=>(
+    <div style={{...St.block,padding:14,marginBottom:10}}>
+      <div style={{fontFamily:"'Oswald',sans-serif",fontSize:13,fontWeight:600,marginBottom:10,letterSpacing:.5}}>{label}</div>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <div style={{flex:2}}>
+          <div style={St.fieldLabel}>Item name</div>
+          <input style={St.input} autoFocus value={formName} placeholder="e.g. Campsite fee"
+            onChange={ev=>setFormName(ev.target.value)} onKeyDown={ev=>ev.key==="Enter"&&onSave()}/>
+        </div>
+        <div style={{flex:1}}>
+          <div style={St.fieldLabel}>Amount ($)</div>
+          <input style={St.input} type="number" min="0" step="0.01" value={formAmt} placeholder="0.00"
+            onChange={ev=>setFormAmt(ev.target.value)} onKeyDown={ev=>ev.key==="Enter"&&onSave()}/>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button style={St.ghostBtn} onClick={cancelForm}>Cancel</button>
+        <button style={St.primaryBtn} onClick={onSave}><Ic.check style={ic(15)}/> {editId?"Save":"Add"}</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={St.pane}>
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Shared Expenses</h2>
+        {!adding&&!editId&&<button style={St.smallBtn} onClick={openAdd}><Ic.plus style={ic(14)}/> Add</button>}
+      </div>
+
+      {expenses.length>0&&(
+        <div style={St.block}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={St.miniLabel}>Total</div>
+              <div style={{fontFamily:"'Oswald',sans-serif",fontSize:28,fontWeight:700,color:"var(--gold)",marginTop:2}}>
+                ${total.toFixed(2)}
+              </div>
+            </div>
+            {members.length>0&&(
+              <div style={{textAlign:"right"}}>
+                <div style={St.miniLabel}>Per person ({n})</div>
+                <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,fontWeight:700,color:"var(--ember2)",marginTop:2}}>
+                  ${(total/n).toFixed(2)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {adding&&expenseForm(saveAdd,"New expense")}
+
+      <div style={{display:"grid",gap:10}}>
+        {expenses.map(e=>(
+          editId===e.id
+            ? <div key={e.id}>{expenseForm(saveEdit,"Edit expense")}</div>
+            : (
+              <div key={e.id} style={{...St.block,padding:14,marginBottom:0,display:"flex",alignItems:"center",gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={St.itemTitle}>{e.name}</div>
+                  <div style={St.itemMeta}>
+                    ${(+e.amount||0).toFixed(2)} total{members.length>0?` · $${(+e.amount/n).toFixed(2)} each`:""}
+                  </div>
+                </div>
+                <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:700,color:"var(--paper)",flexShrink:0,marginRight:4}}>
+                  ${(+e.amount||0).toFixed(2)}
+                </div>
+                <button style={St.iconBtn} onClick={()=>openEdit(e)} aria-label="Edit"><Ic.edit style={ic(15)}/></button>
+                <button style={St.iconBtn} onClick={()=>del(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+              </div>
+            )
+        ))}
+      </div>
+
+      {expenses.length===0&&!adding&&(
+        <Empty icon={Ic.dollar} text="Add shared expenses like the campsite fee, firewood, ice, or propane. Costs split evenly across your crew."/>
+      )}
+    </div>
   );
 }
 
