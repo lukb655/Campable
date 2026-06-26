@@ -2209,6 +2209,8 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
   const trails=trip.trails||[];
   const photos=trip.photos||[];
   const events=trip.events||[];
+  const meals=trip.meals||[];
+  const waypoints=trip.waypoints||[];
 
   /* ── schedule ── */
   const [addEvt,setAddEvt]=useState(false);
@@ -2223,29 +2225,49 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
     return days;
   },[trip.start,trip.end]);
 
+  const getWaypointInfo=waypointId=>{
+    if(!waypointId) return null;
+    return waypoints.find(w=>w.id===waypointId);
+  };
+
+  const getWaypointDetail=wp=>{
+    if(!wp) return "";
+    if(wp.type==="Trail") return wp.mileage?`${wp.mileage} mi`:"";
+    if(wp.type==="Vista") return wp.description||"Vista";
+    if(wp.type==="Other Point") return wp.description||"Other Point";
+    return "";
+  };
+
+  const allItems=useMemo(()=>{
+    const items=[];
+    tripDays.forEach(day=>{
+      events.forEach(e=>{if(e.day===day.v) items.push({...e,type:"event",sortKey:(e.time||"").padStart(5,"0"),day:day.v});});
+      meals.forEach(m=>{if(m.day===day.v) items.push({...m,type:"meal",sortKey:(m.scheduledTime||"").padStart(5,"0"),day:day.v});});
+    });
+    return items.sort((a,b)=>a.sortKey.localeCompare(b.sortKey));
+  },[events,meals,tripDays]);
+
   const byDay=useMemo(()=>{
     const g={}; tripDays.forEach(d=>{g[d.v]=[];});
-    [...events].sort((a,b)=>(a.day+"|"+(a.time||"")).localeCompare(b.day+"|"+(b.time||""))).forEach(e=>{
-      if(g[e.day]) g[e.day].push(e); else g[e.day]=[e];
-    });
+    allItems.forEach(item=>{if(g[item.day]) g[item.day].push(item);});
     return g;
-  },[events,tripDays]);
+  },[allItems,tripDays]);
 
   const addEvent=e=>{patch({events:[...events,{id:uid(),...e}]});flash("Event added");setAddEvt(false);};
   const delEvent=id=>patch({events:events.filter(e=>e.id!==id)});
-  const eventTypes=["Activity","Hike","Meal","Travel","Other"];
+  const eventTypes=["Activity","Hike","Travel","Rest","Other"];
 
   /* ── map ── */
   const ref=useRef(null);
   const [openTrail,setOpenTrail]=useState(false);
   const [pick,setPick]=useState(false);
   const [preset,setPreset]=useState(null);
-  const waypoints=trails.filter(t=>t.lat&&t.lng);
+  const trailsOnMap=trails.filter(t=>t.lat&&t.lng);
 
   useEffect(()=>{
     if(!ref.current) return;
     const cs=(trip.campLat&&trip.campLng)?[+trip.campLat,+trip.campLng]:null;
-    const center=cs||(waypoints.length?[+waypoints[0].lat,+waypoints[0].lng]:[39.0476,-79.3074]);
+    const center=cs||(trailsOnMap.length?[+trailsOnMap[0].lat,+trailsOnMap[0].lng]:[39.0476,-79.3074]);
     const map=L.map(ref.current,{attributionControl:false}).setView(center,12);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
     const bounds=[];
@@ -2254,7 +2276,7 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
       L.marker(cs,{icon:tentIcon}).addTo(map).bindPopup(`<b>Campsite</b><br>${trip.campLabel||trip.name}`);
       bounds.push(cs);
     }
-    waypoints.forEach(p=>{
+    trailsOnMap.forEach(p=>{
       L.marker([+p.lat,+p.lng]).addTo(map).bindPopup(`<b>${p.name}</b><br>${(+p.miles||0).toFixed(1)} mi · ${p.difficulty||""}`);
       bounds.push([+p.lat,+p.lng]);
     });
@@ -2290,25 +2312,34 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
 
       {/* ── SCHEDULE ── */}
       <div style={St.listHead}>
-        <h2 style={St.h2}>Schedule</h2>
+        <h2 style={St.h2}>Itinerary</h2>
         {!readOnly&&<button style={St.smallBtn} onClick={()=>setAddEvt(true)}><Ic.plus style={ic(14)}/> Event</button>}
       </div>
-      {events.length===0 && <Empty icon={Ic.cal} text="Add activities and events to build your day-by-day itinerary."/>}
+      {allItems.length===0 && <Empty icon={Ic.cal} text="Add activities and events to build your day-by-day itinerary."/>}
       {tripDays.filter(d=>(byDay[d.v]||[]).length>0).map(d=>(
-        <div key={d.v} style={{marginBottom:16}}>
+        <div key={d.v} style={{marginBottom:20}}>
           <div style={St.yearLabel}>
             <span style={{...St.yearNum,fontSize:12,letterSpacing:1}}>{d.l}</span>
             <span style={St.yearLine}/>
           </div>
-          <div style={{display:"grid",gap:8}}>
-            {(byDay[d.v]||[]).map(e=>(
-              <div key={e.id} style={St.itemRow}>
-                <div style={{...St.dayChip,minWidth:52,fontSize:11}}>{e.time||"—"}</div>
+          <div style={{display:"grid",gap:10}}>
+            {(byDay[d.v]||[]).map(item=>(
+              <div key={item.id} style={St.itemRow}>
+                <div style={{...St.dayChip,minWidth:52,fontSize:11}}>{item.type==="event"?(item.time||"—"):(item.scheduledTime||"—")}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={St.itemTitle}>{e.title}</div>
-                  <div style={St.itemMeta}>{e.type}{e.notes?` · ${e.notes}`:""}</div>
+                  <div style={St.itemTitle}>{item.type==="event"?item.title:item.title}</div>
+                  {item.type==="event" && getWaypointInfo(item.waypointId) && (
+                    <div style={{fontSize:12,color:"var(--ember2)",marginBottom:4,fontWeight:500}}>
+                      📍 {getWaypointInfo(item.waypointId).name} · {getWaypointInfo(item.waypointId).type}{getWaypointDetail(getWaypointInfo(item.waypointId))?` · ${getWaypointDetail(getWaypointInfo(item.waypointId))}":""}
+                    </div>
+                  )}
+                  <div style={St.itemMeta}>
+                    {item.type==="event"?
+                      `${item.type||"Activity"}${item.notes?` · ${item.notes}`:""}${item.assignee?` · Assigned to ${members.find(m=>m.id===item.assignee)?.name||""}":""}`
+                      :`Meal${item.responsible?` · Cook: ${members.find(m=>m.id===item.responsible)?.name||""}`:""}`}
+                  </div>
                 </div>
-                {!readOnly&&<button style={St.iconBtn} onClick={()=>delEvent(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
+                {!readOnly&&item.type==="event"&&<button style={St.iconBtn} onClick={()=>delEvent(item.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
               </div>
             ))}
           </div>
@@ -2375,6 +2406,8 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
           {k:"day",label:"Day",type:"select",opts:tripDays,def:tripDays[0]?.v||""},
           {k:"time",label:"Time (e.g. 09:00)",type:"text"},
           {k:"type",label:"Type",type:"select",opts:eventTypes.map(t=>({v:t,l:t})),def:"Activity"},
+          {k:"waypointId",label:"Link to waypoint (optional)",type:"select",allowEmpty:true,opts:waypoints.map(w=>({v:w.id,l:w.name}))},
+          {k:"assignee",label:"Assign to (optional)",type:"select",allowEmpty:true,opts:members.map(m=>({v:m.id,l:m.name}))},
           {k:"notes",label:"Notes (optional)",type:"text"},
         ]}/>}
       {openTrail&&!readOnly&&<FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpenTrail(false);setPreset(null);}} onSave={addTrail}
@@ -2648,7 +2681,7 @@ function WaypointsTab({trip,me,patch,flash,readOnly}){
       {/* ── MODALS ── */}
       {addWp&&!readOnly&&<WaypointForm onClose={()=>{setAddWp(false);setPreset(null);}} onSave={addWaypoint} preset={preset} onPick={()=>setPick(true)}/>}
       {pick&&<PinPicker startLat={preset?.lat} startLng={preset?.lng} title="Pick waypoint location" onClose={()=>setPick(false)} onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setAddWp(true);}}/>}
-      {addToItin&&<AddToItineraryForm waypoint={addToItin} tripDays={tripDays} onClose={()=>setAddToItin(null)} onSave={addToItinerary}/>}
+      {addToItin&&<AddToItineraryForm waypoint={addToItin} tripDays={tripDays} members={members} onClose={()=>setAddToItin(null)} onSave={addToItinerary}/>}
       {delConfirm&&<Modal title="Remove waypoint?" onClose={()=>setDelConfirm(null)}>
         <p style={St.sub}>This can't be undone.</p>
         <div style={St.modalActions}>
@@ -2688,8 +2721,8 @@ function WaypointForm({onClose,onSave,preset,onPick}){
   );
 }
 
-function AddToItineraryForm({waypoint,tripDays,onClose,onSave}){
-  const [v,setV]=useState({title:waypoint.name,day:tripDays[0]?.v||"",time:"",type:"Activity",notes:"",waypointId:waypoint.id});
+function AddToItineraryForm({waypoint,tripDays,members,onClose,onSave}){
+  const [v,setV]=useState({title:waypoint.name,day:tripDays[0]?.v||"",time:"",type:"Activity",notes:"",waypointId:waypoint.id,assignee:""});
   const submit=()=>{if(!v.title.trim()||!v.day) return; onSave(v);};
   return (
     <Modal title="Add to Itinerary" onClose={onClose}>
@@ -2698,6 +2731,10 @@ function AddToItineraryForm({waypoint,tripDays,onClose,onSave}){
         {tripDays.map(d=><option key={d.v} value={d.v}>{d.l}</option>)}
       </select></Field>
       <Field label="Time (optional)"><input style={St.input} type="time" value={v.time} onChange={e=>setV({...v,time:e.target.value})}/></Field>
+      <Field label="Assign to (optional)"><select style={St.input} value={v.assignee} onChange={e=>setV({...v,assignee:e.target.value})}>
+        <option value="">—</option>
+        {members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+      </select></Field>
       <div style={St.modalActions}>
         <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
         <button style={St.primaryBtn} onClick={submit} disabled={!v.title.trim()||!v.day}><Ic.check style={ic(15)}/> Add to itinerary</button>
