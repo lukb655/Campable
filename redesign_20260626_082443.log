@@ -1,0 +1,256 @@
+Campable Redesign Runner
+Project: /c/Users/mlj25/Claude/Projects/Camping
+Started: Fri Jun 26 08:24:44 EDT 2026
+Log:     redesign_20260626_082443.log
+
+══════════════════════════════════════════════════
+  FIX 1: Navigation: 3-Button + Expandable Center Menu
+  Started: Fri Jun 26 08:24:44 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's a summary of what changed:
+
+**Bottom nav is now 3 buttons:**
+- **Home** (left) — tent icon, navigates to Overview tab
+- **Center** — 56px circular ember button with drop shadow, sits elevated above the bar (`marginTop:-18`). Tapping expands a vertical popup with 5 items: Meals, Costs, Packing List, Waypoints, Itinerary. Tapping again collapses it.
+- **Crew** (right) — navigates to Crew tab
+
+**Center menu details:**
+- Smooth CSS `scaleY` + `opacity` transition via `.center-popup` / `.center-popup.open` classes
+- Plus icon rotates 45° to an X when open
+- Active tab item highlighted in `--ember2`
+- Transparent full-screen overlay closes the menu on outside tap
+- Renders above all content via `z-index:60`
+
+**Two new stub tabs added:** `PackingListTab` and `WaypointsTab` (placeholder content — "coming soon" style, matching app conventions).
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 1 done: Fri Jun 26 08:30:54 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 2: Home Page: Customizable Widget Tiles
+  Started: Fri Jun 26 08:31:09 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what was implemented:
+
+**Changes in `index.html`:**
+
+- **`OverviewTab`** — removed the hardcoded 4-stat row and the now-unused `miles`/`cost` locals; replaced with `<WidgetGrid trip={trip} isAdmin={isAdmin} patch={patch}/>`.
+
+- **`WIDGET_DEFS`** — array of 10 widget descriptors (Miles, Meals, Food Cost, Crew, Days, Nights, Waypoints, Trails, Events, Photos), each with an id, label, icon, and a `get(trip)` function that computes the live count.
+
+- **`WidgetGrid`** — renders the 2×2 tile grid using `St.statCard` styling. Admins see an "Edit Widgets" button in the top-right; non-admins see only the tiles. Falls back to `["miles","meals","cost","crew"]` when no `widgetOrder` is saved on the trip.
+
+- **`WidgetPicker`** — modal shown to admins with all 10 widget types as toggleable tiles (with live counts). Selected tiles highlight in ember orange with a border. The Save button stays disabled until exactly 4 are chosen. Saves to Firestore via `patch({widgetOrder: sel})` using the existing `updateTrip` data path.
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 2 done: Fri Jun 26 08:37:36 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 3: Home Page: Trip Readiness Bar
+  Started: Fri Jun 26 08:37:52 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what changed:
+
+**Updated `OverviewTab` — Trip Readiness section** (below the widget tiles grid):
+
+| Criterion | Logic |
+|---|---|
+| **Crew confirmed** | `members.length >= 2` |
+| **Packing list complete** | All meal grocery items have `got: true` (at least one must exist) |
+| **Costs settled** | If dues enabled: all members `duesPaid`; otherwise: at least one shared expense logged |
+| **Itinerary planned** | `events.length >= 1` |
+| **Waypoints added** | At least one trail entry has `lat`/`lng` set |
+
+**UI changes:**
+- Pending items now show an amber warning triangle instead of an empty dot — clearer signal for what's still needed
+- Complete items keep the existing ember-green checkmark dot
+- Progress bar and `pct%` label remain, now calculated over 5 criteria instead of 4
+
+All data flows directly from the Firestore-synced trip object — no extra user input needed.
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 3 done: Fri Jun 26 08:43:52 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 4: Home Page: Field Notes Section
+  Started: Fri Jun 26 08:44:08 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's a summary of what was added:
+
+**Field Notes feed** is now live on the trip Overview tab, directly below the readiness bar:
+
+- **Data layer** — three new methods on `Data`: `subscribeFieldNotes`, `addFieldNote`, `deleteFieldNote`. In Firebase mode they use the `trips/{tripId}/fieldNotes` subcollection ordered by `createdAt desc`. The local-storage fallback uses `campable:fieldNotes:{tripId}` keys with the same reactive subscription pattern as the existing trips layer.
+
+- **FieldNotesSection component** — scrollable list (max 260px) of notes, each showing author name in ember color, a relative timestamp ("just now / 5m ago / 3h ago / Dec 12"), and the note text. Notes are read-only once posted. Admin gets a trash icon per note with a confirm prompt; non-admins see no delete controls.
+
+- **Input row** — single text field + "Post" button at the bottom of the block. Enter submits; button is disabled while empty or posting.
+
+- **Naming** — the existing single-user admin notes textarea was renamed to "Trip Notes" to distinguish it from the new collaborative feed.
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 4 done: Fri Jun 26 08:49:12 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 5: Home Page: Site Info + Directions
+  Started: Fri Jun 26 08:49:28 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what was added:
+
+**`SiteInfoSection` component** (56 lines, inserted at line 944):
+- Shows the **campsite name** (`trip.campLabel` or `trip.name`) in Oswald header style
+- Shows the **address** (`trip.siteAddress`) and **site notes** (`trip.siteNotes`) — both new fields on the trip document
+- **Get Directions button** links to `https://maps.google.com/?q=<encoded address>` (always Google Maps, as specified)
+- Admin sees an **edit pencil icon** in the section header; clicking it opens inline inputs for address and notes, with Save / Cancel buttons
+- Save calls `patch({siteAddress, siteNotes})` to write to Firestore
+- Edit mode is hidden when `readOnly` (completed trips)
+- Non-admins with no data set see a polite "No site info available yet." message
+
+Placed in `OverviewTab` directly below `<FieldNotesSection>`, above Trip Notes.
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 5 done: Fri Jun 26 08:54:37 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 6: Home Page: Leave Trip + Complete Trip Buttons
+  Started: Fri Jun 26 08:54:53 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what changed in `index.html`:
+
+**`completeTrip` handler (new, lines 1018–1022)** — confirms, writes `{status:"completed", completedAt: ISO timestamp}` to Firestore, flashes a message, and calls `onBack()` to return to the trips list.
+
+**Bottom button row (lines 1066–1077)** — replaces the old single Leave Trip button:
+- Hidden entirely when `readOnly` (i.e., trip is already completed)
+- **Leave Trip** (`ghostBtn` — outlined, muted) shown for non-admins
+- **Complete Trip** (`primaryBtn` — orange/accent) shown for admins only
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 6 done: Fri Jun 26 08:58:43 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 7: Crew Tab: Invite Code Display
+  Started: Fri Jun 26 08:58:59 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's a summary of what changed:
+
+**Field renames (Firestore)**
+- `trip.code` → `trip.joinCode` (stored at `trips/{tripId}/joinCode`)
+- `trip.allowCrewShareCode` → `trip.shareCode` (stored at `trips/{tripId}/shareCode`)
+
+**Crew tab behavior**
+- Join code card renders at the top only when `trip.joinCode` exists **and** the user is admin or `shareCode` is true
+- Admin sees the code card with an inline toggle row ("Show code to crew") that writes to `shareCode`
+- Non-admins see the code only when sharing is on; if off, the section is hidden entirely
+- Single **"Copy Code"** text button copies to clipboard (share icon button removed from crew view)
+
+**Also updated**
+- `createTrip` writes `joinCode` instead of `code`
+- `joinByCode` queries `where("joinCode","==",code)` in Firestore and the local fallback
+- Settings Invite Code block uses the new field names and the renamed `shareCodeNative` function
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 7 done: Fri Jun 26 09:04:24 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 8: Crew Tab: Members List with Owner Badge
+  Started: Fri Jun 26 09:04:41 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what changed:
+
+- **Sorted crew list**: Owner appears first, all other members sorted alphabetically by name using a `useMemo` computed `sortedMembers` array.
+- **Owner badge**: A gold "Owner" pill badge (matching the gold `--gold` CSS variable) appears inline next to the owner's name, consistent with the existing "you" tag style.
+- The members data comes from `trip.members` (already available on the trip document) — no extra Firestore fetch needed since members are embedded in the trip.
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 8 done: Fri Jun 26 09:08:21 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 9: Crew Tab: Settled Up & Dues Status
+  Started: Fri Jun 26 09:08:38 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's what was added:
+
+**Dues & Settled Up section** in `CrewTab` (`index.html:1179–1204`):
+
+- **Gated** by `trip.duesEnabled` — hidden when dues are off
+- **Per-person share** line shows the amount split from `trip.expenses` (Costs tab data), only when expenses > $0
+- **Each member row** shows one of three states:
+  - Green `checkCircle` + "Settled" — when `duesPaid === true`
+  - Amber ⏳ "Pending" — when `duesPending === true` (submitted, awaiting admin confirmation)
+  - Ember-orange amount + "owed" — when neither (e.g. `$37.50 owed`)
+- **All settled banner** — green banner appears when every member has `duesPaid`
+- No Pay Dues button anywhere in this section — that action stays exclusively in the Costs tab
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 9 done: Fri Jun 26 09:13:20 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 10: Crew Tab: Cook & Responsibilities
+  Started: Fri Jun 26 09:13:36 EDT 2026
+══════════════════════════════════════════════════
+Done. Here's a summary of what was added:
+
+**New in `index.html` (44 lines):**
+
+- **`Ic.flame`** — campfire/flame SVG icon for Fire Starter
+- **`Ic.shield`** — shield SVG icon for First Aid
+- **`TRIP_ROLES` constant** — defines the four roles: Cook, Fire Starter, First Aid, Navigation with their icons
+- **`responsibilities` / `nameOf` / `assignRole`** — state and helpers inside `CrewTab`
+- **Responsibilities UI block** — sits between Dues and the member cards, showing each role with:
+  - Admin view: inline `<select>` dropdown populated with all crew members + "Unassigned"
+  - Non-admin / read-only view: plain text showing the assigned member name or "Unassigned"
+  - Assignments saved to `trip.responsibilities` (a `{roleId: userId}` map) via the existing `patch()` → `Data.updateTrip()` path, which writes to `trips/{tripId}` in Firestore
+SessionEnd hook [node "${CLAUDE_PLUGIN_ROOT}/hooks/session-end-cleanup.mjs"] failed: Hook cancelled
+  ✓  Fix 10 done: Fri Jun 26 09:17:55 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 11: Crew Tab: Expandable Member Profiles
+  Started: Fri Jun 26 09:18:11 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 11 FAILED: Fri Jun 26 09:20:23 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 12: Crew Tab: Group Chat
+  Started: Fri Jun 26 09:20:39 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 12 FAILED: Fri Jun 26 09:20:49 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 13: Meals Tab: Extras Section
+  Started: Fri Jun 26 09:21:05 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 13 FAILED: Fri Jun 26 09:21:11 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 14: Costs Tab: Full Redesign
+  Started: Fri Jun 26 09:21:27 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 14 FAILED: Fri Jun 26 09:21:33 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 15: Packing List Tab
+  Started: Fri Jun 26 09:21:49 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 15 FAILED: Fri Jun 26 09:21:55 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 16: Waypoints Tab
+  Started: Fri Jun 26 09:22:11 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 16 FAILED: Fri Jun 26 09:22:17 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 17: Itinerary Tab
+  Started: Fri Jun 26 09:22:33 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 17 FAILED: Fri Jun 26 09:22:40 EDT 2026
+
+══════════════════════════════════════════════════
+  FIX 18: Sign Up: Privacy Policy Confirmation
+  Started: Fri Jun 26 09:22:55 EDT 2026
+══════════════════════════════════════════════════
+You've hit your monthly spend limit · raise it at claude.ai/settings/usage
+  ✗  Fix 18 FAILED: Fri Jun 26 09:23:01 EDT 2026
+
+══════════════════════════════════════════════════
+  ALL 18 FIXES COMPLETE
+  Finished: Fri Jun 26 09:23:17 EDT 2026
+  Log: redesign_20260626_082443.log
+══════════════════════════════════════════════════
