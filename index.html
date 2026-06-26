@@ -846,12 +846,12 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
   },[members.map(m=>m.id+(m.photo||"")).join()]);
 
   const [addName,setAddName]=useState("");
-  const addMember=()=>{ if(!addName.trim())return;
+  const addMember=()=>{ if(!isAdmin)return; if(!addName.trim())return;
     patch({members:[...members,{id:uid(),name:addName.trim(),email:"",emergency:"",photo:""}]});
     setAddName(""); flash("Added to crew");
   };
   const updateMember=(id,fields)=>patch({members:members.map(m=>m.id===id?{...m,...fields}:m)});
-  const delMember=(id)=>patch({members:members.filter(m=>m.id!==id)});
+  const delMember=(id)=>{ if(!isAdmin)return; patch({members:members.filter(m=>m.id!==id)}); };
 
   const responsibilities=(mid)=>{
     const out=[];
@@ -863,11 +863,13 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
     <div style={St.pane}>
       {(isAdmin||trip.allowCrewShareCode) && <ShareCard trip={trip} flash={flash}/>}
 
-      <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
-        <input style={St.input} placeholder="Add someone by name" value={addName}
-          onChange={e=>setAddName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMember()}/>
-        <button style={St.smallBtn} onClick={addMember}><Ic.plus style={ic(15)}/></button>
-      </div>
+      {isAdmin && (
+        <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
+          <input style={St.input} placeholder="Add someone by name" value={addName}
+            onChange={e=>setAddName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMember()}/>
+          <button style={St.smallBtn} onClick={addMember}><Ic.plus style={ic(15)}/></button>
+        </div>
+      )}
 
       <div style={{display:"grid",gap:14}}>
         {members.map(m=>{
@@ -888,7 +890,7 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
                     {Math.abs(t.net)<0.005?"settled up":t.net>0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
                   </div>
                 </div>
-                <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>
+                {isAdmin && <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
               </div>
 
               <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>
