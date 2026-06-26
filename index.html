@@ -401,7 +401,14 @@ function App(){
             <button style={St.primaryBtn} onClick={()=>setRoute({name:"trips"})}>Back to trips</button></div>}
         {route.name==="me" &&
           <Profile me={me} mode={HAS_FB?"live":"local"} photo={profilePhoto}
-            onPhotoChange={p=>{setProfilePhoto(p);Data.updateProfile(me.id,{photo:p});}}
+            onPhotoChange={p=>{
+              setProfilePhoto(p);
+              Data.updateProfile(me.id,{photo:p});
+              (trips||[]).forEach(t=>{
+                const members=(t.members||[]).map(m=>m.id===me.id?{...m,photo:p}:m);
+                Data.updateTrip(t.id,{members});
+              });
+            }}
             onBack={()=>setRoute({name:"trips"})}
             onSignOut={async()=>{await Auth.signOut();setMe(null);setRoute({name:"trips"});setProfilePhoto("");}}
             onDeleted={()=>{setMe(null);setTrips(null);setRoute({name:"trips"});setProfilePhoto("");}}
@@ -808,6 +815,15 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
     return map;
   },[trip]);
 
+  const [fetchedPhotos,setFetchedPhotos]=useState({});
+  useEffect(()=>{
+    members.filter(m=>!m.photo).forEach(m=>{
+      Data.getProfile(m.id).then(p=>{
+        if(p.photo) setFetchedPhotos(prev=>({...prev,[m.id]:p.photo}));
+      });
+    });
+  },[members.map(m=>m.id+(m.photo||"")).join()]);
+
   const [addName,setAddName]=useState("");
   const addMember=()=>{ if(!addName.trim())return;
     patch({members:[...members,{id:uid(),name:addName.trim(),email:"",emergency:"",photo:""}]});
@@ -851,8 +867,8 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
           return (
             <div key={m.id} style={St.memberCard}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
-                {m.photo
-                  ? <img src={m.photo} alt="" style={St.memberAvatarImg}/>
+                {(m.photo||fetchedPhotos[m.id])
+                  ? <img src={m.photo||fetchedPhotos[m.id]} alt="" style={St.memberAvatarImg}/>
                   : <div style={St.avatar}>{m.name.slice(0,1).toUpperCase()}</div>}
                 <div style={{flex:1,minWidth:0}}>
                   <div style={St.itemTitle}>{m.name}{isSelf && <span style={St.youTag}>you</span>}</div>
