@@ -855,9 +855,14 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
   const updateMember=(id,fields)=>patch({members:members.map(m=>m.id===id?{...m,...fields}:m)});
   const delMember=(id)=>{ if(!isAdmin)return; patch({members:members.filter(m=>m.id!==id)}); };
 
-  const responsibilities=(mid)=>{
+  const cookingFor=(mid)=>{
     const out=[];
     meals.forEach(m=>{ if(m.responsible===mid) out.push(m.title); });
+    return out;
+  };
+  const bringing=(mid)=>{
+    const out=[];
+    meals.forEach(m=>(m.items||[]).forEach(i=>{ if(i.responsible===mid) out.push(i.name+(i.qty?` (${i.qty})`:"")); }));
     return out;
   };
 
@@ -876,7 +881,8 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
       <div style={{display:"grid",gap:14}}>
         {members.map(m=>{
           const t=tally[m.id]||{paid:0,share:0,net:0};
-          const resp=responsibilities(m.id);
+          const cooks=cookingFor(m.id);
+          const brings=bringing(m.id);
           const isSelf=m.id===me.id;
           return (
             <div key={m.id} style={St.memberCard}>
@@ -899,8 +905,14 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
 
               <div style={St.memberRow}>
                 <Ic.food style={{...ic(14),color:"var(--sage)"}}/>
-                <span style={{color:resp.length?"var(--paper)":"var(--sage)"}}>
-                  {resp.length?`Responsible for: ${resp.join(", ")}`:"No meals assigned yet"}
+                <span style={{color:cooks.length?"var(--paper)":"var(--sage)"}}>
+                  {cooks.length?`Cook: ${cooks.join(", ")}`:"Not cooking any meals"}
+                </span>
+              </div>
+              <div style={St.memberRow}>
+                <Ic.cart style={{...ic(14),color:"var(--sage)"}}/>
+                <span style={{color:brings.length?"var(--paper)":"var(--sage)"}}>
+                  {brings.length?`Bringing: ${brings.join(", ")}`:"Nothing assigned to bring"}
                 </span>
               </div>
 
@@ -936,10 +948,11 @@ function MealsTab({trip,patch,flash}){
 
   const addItem=(mealId,name,qty)=>{
     if(!name.trim())return;
-    patch({meals:meals.map(m=>m.id===mealId?{...m,items:[...(m.items||[]),{id:uid(),name:name.trim(),qty:qty.trim(),got:false}]}:m)});
+    patch({meals:meals.map(m=>m.id===mealId?{...m,items:[...(m.items||[]),{id:uid(),name:name.trim(),qty:qty.trim(),got:false,responsible:""}]}:m)});
   };
   const toggleItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.map(i=>i.id===itemId?{...i,got:!i.got}:i)}:m)});
   const delItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.filter(i=>i.id!==itemId)}:m)});
+  const updateItem=(mealId,itemId,fields)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.map(i=>i.id===itemId?{...i,...fields}:i)}:m)});
 
   const allItems=useMemo(()=>{
     const out=[]; meals.forEach(m=>(m.items||[]).forEach(i=>out.push({...i,meal:m.title,mealId:m.id})));
@@ -965,7 +978,7 @@ function MealsTab({trip,patch,flash}){
         {meals.map(m=>(
           <MealCard key={m.id} meal={m} members={members} nameOf={nameOf}
             onDel={()=>delMeal(m.id)} onUpdate={f=>updateMeal(m.id,f)}
-            onAddItem={(n,q)=>addItem(m.id,n,q)} onToggleItem={iid=>toggleItem(m.id,iid)} onDelItem={iid=>delItem(m.id,iid)}/>
+            onAddItem={(n,q)=>addItem(m.id,n,q)} onToggleItem={iid=>toggleItem(m.id,iid)} onDelItem={iid=>delItem(m.id,iid)} onUpdateItem={(iid,f)=>updateItem(m.id,iid,f)}/>
         ))}
       </div>
 
@@ -975,16 +988,16 @@ function MealsTab({trip,patch,flash}){
           {k:"day",label:"Day",type:"select",opts:days.map(d=>({v:d,l:d})),def:"Fri"},
           {k:"cost",label:"Estimated cost ($)",type:"number"},
           {k:"paidBy",label:"Paid by",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
-          {k:"responsible",label:"Who's cooking / bringing it",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
+          {k:"responsible",label:"Cook (who's making this meal)",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
           {k:"forAll",label:"Split cost across whole crew",type:"bool",def:true},
         ]}/>}
 
-      {showList && <ShoppingList items={allItems} onToggle={(mealId,itemId)=>toggleItem(mealId,itemId)} onClose={()=>setShowList(false)}/>}
+      {showList && <ShoppingList items={allItems} members={members} onToggle={(mealId,itemId)=>toggleItem(mealId,itemId)} onClose={()=>setShowList(false)}/>}
     </div>
   );
 }
 
-function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onDelItem}){
+function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onDelItem,onUpdateItem}){
   const [exp,setExp]=useState(false);
   const [iname,setIname]=useState(""); const [iqty,setIqty]=useState("");
   const items=meal.items||[];
@@ -998,7 +1011,7 @@ function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onD
           <div style={St.itemMeta}>
             ${(+meal.cost||0).toFixed(2)}
             {meal.paidBy?` · paid by ${nameOf(meal.paidBy)}`:""}
-            {meal.responsible?` · ${nameOf(meal.responsible)} cooking`:""}
+            {meal.responsible?` · Cook: ${nameOf(meal.responsible)}`:""}
           </div>
         </div>
         <button style={St.iconBtn} onClick={onDel} aria-label="Delete meal"><Ic.trash style={ic(15)}/></button>
@@ -1020,6 +1033,13 @@ function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onD
               <span style={{flex:1,textDecoration:i.got?"line-through":"none",opacity:i.got?.55:1,fontSize:13.5}}>
                 {i.name}{i.qty?` · ${i.qty}`:""}
               </span>
+              {members.length>0 && onUpdateItem && (
+                <select style={St.itemRespSelect} value={i.responsible||""} title="Who's bringing this?"
+                  onChange={e=>onUpdateItem(i.id,{responsible:e.target.value})}>
+                  <option value="">—</option>
+                  {members.map(m=><option key={m.id} value={m.id}>{m.name.split(" ")[0]}</option>)}
+                </select>
+              )}
               <button style={St.iconBtn} onClick={()=>onDelItem(i.id)} aria-label="Remove"><Ic.x style={ic(13)}/></button>
             </div>
           ))}
@@ -1035,9 +1055,10 @@ function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onD
   );
 }
 
-function ShoppingList({items,onToggle,onClose}){
+function ShoppingList({items,members,onToggle,onClose}){
   const remaining=items.filter(i=>!i.got);
   const done=items.filter(i=>i.got);
+  const firstNameOf=mid=>members?(members.find(x=>x.id===mid)?.name.split(" ")[0]||""):"";
   return (
     <Modal title="Shopping list" onClose={onClose}>
       {items.length===0 && <p style={St.sub}>No ingredients yet. Open a meal and add what it needs.</p>}
@@ -1049,6 +1070,7 @@ function ShoppingList({items,onToggle,onClose}){
               <div key={i.id} style={St.shopRow}>
                 <button style={St.checkBtn} onClick={()=>onToggle(i.mealId,i.id)} aria-label="Got it"/>
                 <span style={{flex:1,fontSize:13.5}}>{i.name}{i.qty?` · ${i.qty}`:""}</span>
+                {i.responsible && <span style={St.shopBringer}>{firstNameOf(i.responsible)}</span>}
                 <span style={St.shopMeal}>{i.meal}</span>
               </div>
             ))}
@@ -1064,6 +1086,7 @@ function ShoppingList({items,onToggle,onClose}){
                   <Ic.check style={{width:12,height:12,color:"var(--night)"}}/>
                 </button>
                 <span style={{flex:1,fontSize:13.5,textDecoration:"line-through",opacity:.55}}>{i.name}{i.qty?` · ${i.qty}`:""}</span>
+                {i.responsible && <span style={{...St.shopBringer,opacity:.55}}>{firstNameOf(i.responsible)}</span>}
               </div>
             ))}
           </div>
@@ -2033,6 +2056,8 @@ const St={
   itemsBox:{marginTop:10,display:"grid",gap:6},
   shopRow:{display:"flex",alignItems:"center",gap:10},
   shopMeal:{fontSize:11,color:"var(--sage)",background:"var(--moss)",padding:"2px 8px",borderRadius:6},
+  shopBringer:{fontSize:11,color:"var(--gold)",background:"rgba(232,178,60,.12)",padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"},
+  itemRespSelect:{background:"var(--moss)",border:"1px solid var(--line)",borderRadius:7,color:"var(--paper)",fontSize:11,padding:"3px 6px",cursor:"pointer",maxWidth:76},
 
   empty:{display:"flex",flexDirection:"column",alignItems:"center",gap:10,textAlign:"center",color:"var(--sage)",fontSize:13,padding:"28px 20px",border:"1px dashed var(--line)",borderRadius:14,marginBottom:14,lineHeight:1.5},
   mapBig:{height:300,borderRadius:12,overflow:"hidden",border:"1px solid var(--line)"},
