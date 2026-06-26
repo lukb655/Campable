@@ -976,15 +976,11 @@ function TripShell({trip,me,flash,onBack,initialTab}){
 }
 
 /* ---------------- FIELD NOTES ---------------- */
-function FieldNotesSection({trip, me, isAdmin}){
-  const [notes,setNotes]=useState([]);
+function FieldNotesSection({trip, me, isAdmin, patch}){
   const [text,setText]=useState("");
   const [posting,setPosting]=useState(false);
 
-  useEffect(()=>{
-    const unsub=Data.subscribeFieldNotes(trip.id,setNotes);
-    return ()=>unsub?.();
-  },[trip.id]);
+  const notes=useMemo(()=>[...(trip.fieldNotes||[])].sort((a,b)=>b.createdAt-a.createdAt),[trip.fieldNotes]);
 
   const fmtAge=(ts)=>{
     const diff=Date.now()-ts;
@@ -998,14 +994,15 @@ function FieldNotesSection({trip, me, isAdmin}){
     const t=text.trim(); if(!t||posting) return;
     setPosting(true);
     try{
-      await Data.addFieldNote(trip.id,{authorId:me.id,authorName:me.name,text:t,createdAt:Date.now()});
+      const newNote={id:uid(),authorId:me.id,authorName:me.name,text:t,createdAt:Date.now()};
+      await patch({fieldNotes:[...(trip.fieldNotes||[]),newNote]});
       setText("");
     }finally{ setPosting(false); }
   };
 
   const del=async(noteId)=>{
     if(!confirm("Delete this note?")) return;
-    await Data.deleteFieldNote(trip.id,noteId);
+    await patch({fieldNotes:(trip.fieldNotes||[]).filter(n=>n.id!==noteId)});
   };
 
   return (
@@ -1145,22 +1142,9 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
         </div>
       </div>
 
-      <FieldNotesSection trip={trip} me={me} isAdmin={isAdmin}/>
+      <FieldNotesSection trip={trip} me={me} isAdmin={isAdmin} patch={patch}/>
 
       <SiteInfoSection trip={trip} isAdmin={isAdmin} patch={patch} readOnly={readOnly}/>
-
-      <div style={St.block}>
-        <div style={St.blockHead}><span>Trip Notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
-        {readOnly
-          ? <div style={{fontSize:13.5,lineHeight:1.6,color:trip.notes?"var(--paper)":"var(--sage)",whiteSpace:"pre-wrap"}}>
-              {trip.notes||"No trip notes."}
-            </div>
-          : <>
-              <textarea style={St.notes} placeholder="Gear list, permits, dark-sky windows, bailout plan…"
-                defaultValue={trip.notes} onBlur={e=>patch({notes:e.target.value})}/>
-              <div style={St.hintSm}>Saves when you tap away.</div>
-            </>}
-      </div>
 
       {!readOnly && (
         <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -1327,16 +1311,11 @@ function MemberProfileModal({member,trip,me,isAdmin,onClose,onUpdate,fetchedPhot
 }
 
 /* -------------------- GROUP CHAT -------------------- */
-function GroupChat({trip,me}){
-  const [messages,setMessages]=useState([]);
+function GroupChat({trip,me,patch}){
+  const messages=useMemo(()=>[...(trip.messages||[])].sort((a,b)=>a.createdAt-b.createdAt),[trip.messages]);
   const [msgText,setMsgText]=useState("");
   const [sending,setSending]=useState(false);
   const messagesEndRef=useRef(null);
-
-  useEffect(()=>{
-    const unsub=Data.subscribeMessages(trip.id,msgs=>setMessages(msgs));
-    return ()=>unsub&&unsub();
-  },[trip.id]);
 
   useEffect(()=>{
     messagesEndRef.current?.scrollIntoView({behavior:"smooth"});
@@ -1350,11 +1329,8 @@ function GroupChat({trip,me}){
     if(!msgText.trim()||sending)return;
     setSending(true);
     try{
-      await Data.addMessage(trip.id,{
-        senderId:me.id,
-        senderName:me.name,
-        text:msgText.trim(),
-      });
+      const newMsg={id:uid(),senderId:me.id,senderName:me.name,text:msgText.trim(),createdAt:Date.now()};
+      await patch({messages:[...(trip.messages||[]),newMsg]});
       setMsgText("");
     }catch(e){
       console.error("Failed to send message",e);
@@ -1503,7 +1479,7 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
       />}
       {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
 
-      <GroupChat trip={trip} me={me}/>
+      <GroupChat trip={trip} me={me} patch={patch}/>
 
       {isAdmin && !readOnly && (
         <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
