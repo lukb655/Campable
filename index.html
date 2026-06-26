@@ -865,7 +865,7 @@ function TripShell({trip,me,flash,onBack,initialTab}){
           {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin} readOnly={isCompleted}/>}
           {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin} readOnly={isCompleted}/>}
           {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
-          {tab==="costs" && <CostsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
+          {tab==="costs" && <CostsTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted} isAdmin={isAdmin}/>}
           {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="packing" && <PackingListTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="waypoints" && <WaypointsTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted}/>}
@@ -1803,112 +1803,178 @@ function ExtrasSection({extras,members,nameOf,readOnly,onAdd,onDel,onUpdate}){
   );
 }
 
-/* ---------------- COSTS (itemized shared expenses) ---------------- */
-function CostsTab({trip,patch,flash,readOnly}){
+/* ---------------- COSTS (redesigned with summary + categories + dues) ---------------- */
+function CostsTab({trip,me,patch,flash,readOnly,isAdmin}){
   const expenses=trip.expenses||[];
+  const meals=trip.meals||[];
+  const extras=trip.extras||[];
   const members=trip.members||[];
-  const n=members.length||1;
-  const total=expenses.reduce((a,e)=>a+(+e.amount||0),0);
+  const costSettings=trip.costSettings||{splitMethod:"evenly"};
+  const nameOf=mid=>members.find(x=>x.id===mid)?.name||"";
 
-  const [adding,setAdding]=useState(false);
-  const [editId,setEditId]=useState(null);
-  const [formName,setFormName]=useState("");
-  const [formAmt,setFormAmt]=useState("");
+  const [distribOpen,setDistribOpen]=useState(false);
 
-  const openAdd=()=>{setFormName("");setFormAmt("");setAdding(true);setEditId(null);};
-  const openEdit=(e)=>{setFormName(e.name);setFormAmt(String(e.amount));setEditId(e.id);setAdding(false);};
-  const cancelForm=()=>{setAdding(false);setEditId(null);};
-
-  const saveAdd=()=>{
-    if(!formName.trim()||!formAmt)return;
-    patch({expenses:[...expenses,{id:uid(),name:formName.trim(),amount:+formAmt}]});
-    setAdding(false);setFormName("");setFormAmt("");flash("Expense added");
-  };
-  const saveEdit=()=>{
-    if(!formName.trim()||!formAmt)return;
-    patch({expenses:expenses.map(e=>e.id===editId?{...e,name:formName.trim(),amount:+formAmt}:e)});
-    setEditId(null);flash("Updated");
-  };
-  const del=(id)=>{patch({expenses:expenses.filter(e=>e.id!==id)});flash("Removed");};
-
-  const expenseForm=(onSave,label)=>(
-    <div style={{...St.block,padding:14,marginBottom:10}}>
-      <div style={{fontFamily:"'Oswald',sans-serif",fontSize:13,fontWeight:600,marginBottom:10,letterSpacing:.5}}>{label}</div>
-      <div style={{display:"flex",gap:8,marginBottom:10}}>
-        <div style={{flex:2}}>
-          <div style={St.fieldLabel}>Item name</div>
-          <input style={St.input} autoFocus value={formName} placeholder="e.g. Campsite fee"
-            onChange={ev=>setFormName(ev.target.value)} onKeyDown={ev=>ev.key==="Enter"&&onSave()}/>
-        </div>
-        <div style={{flex:1}}>
-          <div style={St.fieldLabel}>Amount ($)</div>
-          <input style={St.input} type="number" min="0" step="0.01" value={formAmt} placeholder="0.00"
-            onChange={ev=>setFormAmt(ev.target.value)} onKeyDown={ev=>ev.key==="Enter"&&onSave()}/>
-        </div>
-      </div>
-      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-        <button style={St.ghostBtn} onClick={cancelForm}>Cancel</button>
-        <button style={St.primaryBtn} onClick={onSave}><Ic.check style={ic(15)}/> {editId?"Save":"Add"}</button>
-      </div>
-    </div>
+  // Calculate costs by category
+  const sharedCosts=expenses;
+  const individualCosts=meals.filter(m=>!m.forAll).concat(extras.filter(e=>e.assignee));
+  const foodCosts=meals.filter(m=>m.cost>0).map(m=>({...m,type:"meal"})).concat(
+    extras.filter(e=>e.price>0).map(e=>({...e,type:"extra"}))
   );
+
+  const sharedTotal=sharedCosts.reduce((a,e)=>a+(+e.amount||0),0);
+  const individualTotal=meals.filter(m=>!m.forAll).reduce((a,m)=>a+(+m.cost||0),0)+extras.filter(e=>e.assignee).reduce((a,e)=>a+(+e.price||0),0);
+  const foodTotal=meals.reduce((a,m)=>a+(+m.cost||0),0)+extras.reduce((a,e)=>a+(+e.price||0),0);
+  const tripTotal=sharedTotal+individualTotal+foodTotal;
+
+  const myMember=members.find(m=>m.id===me.id);
+  const markPayDues=()=>{
+    const members_update=members.map(m=>
+      m.id===me.id?{...m,duesPaid:true,duesPending:false}:m
+    );
+    patch({members:members_update});
+    flash("Dues marked as paid");
+  };
 
   return (
     <div style={St.pane}>
-      <div style={St.listHead}>
-        <h2 style={St.h2}>Shared Expenses</h2>
-        {!readOnly&&!adding&&!editId&&<button style={St.smallBtn} onClick={openAdd}><Ic.plus style={ic(14)}/> Add</button>}
+      {/* Summary tile */}
+      <div style={{...St.block,background:"linear-gradient(135deg,var(--moss),var(--mist))",border:"1px solid var(--line)",padding:24,marginBottom:20,textAlign:"center"}}>
+        <div style={St.miniLabel}>Total Trip Cost</div>
+        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:44,fontWeight:700,color:"var(--gold)",marginTop:8}}>
+          ${tripTotal.toFixed(2)}
+        </div>
+        {members.length>0&&(
+          <div style={{fontSize:13,color:"var(--sage)",marginTop:12}}>
+            ≈ ${(tripTotal/members.length).toFixed(2)} per person
+          </div>
+        )}
       </div>
 
-      {expenses.length>0&&(
-        <div style={St.block}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <div style={St.miniLabel}>Total</div>
-              <div style={{fontFamily:"'Oswald',sans-serif",fontSize:28,fontWeight:700,color:"var(--gold)",marginTop:2}}>
-                ${total.toFixed(2)}
-              </div>
-            </div>
-            {members.length>0&&(
-              <div style={{textAlign:"right"}}>
-                <div style={St.miniLabel}>Per person ({n})</div>
-                <div style={{fontFamily:"'Oswald',sans-serif",fontSize:22,fontWeight:700,color:"var(--ember2)",marginTop:2}}>
-                  ${(total/n).toFixed(2)}
+      {/* Cost category tiles */}
+      <div style={{display:"grid",gap:14,marginBottom:20}}>
+        <CostCategoryTile title="Shared Costs" icon={Ic.users} items={sharedCosts} total={sharedTotal} members={members} nameOf={nameOf}
+          expandable readOnly={readOnly} onAdd={!readOnly?()=>{alert("Add shared expenses in Crew tab")}:null}/>
+
+        <CostCategoryTile title="Individual Costs" icon={Ic.dollar} items={individualCosts} total={individualTotal} members={members} nameOf={nameOf}
+          expandable readOnly={readOnly} onAdd={!readOnly?()=>{alert("Add individual meal costs in Meals tab")}:null}/>
+
+        <CostCategoryTile title="Food Costs" icon={Ic.food} items={foodCosts} total={foodTotal} members={members} nameOf={nameOf}
+          expandable readOnly={readOnly} onAdd={!readOnly?()=>{alert("Add meals or extras in Meals tab")}:null}/>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:20}}>
+        <button style={{...St.primaryBtn,flex:1}} onClick={markPayDues}>
+          <Ic.dollar style={ic(15)}/> Pay Dues
+        </button>
+        {isAdmin&&(
+          <button style={{...St.ghostBtn,flex:1}} onClick={()=>setDistribOpen(true)}>
+            <Ic.gear style={ic(15)}/> Change Distribution
+          </button>
+        )}
+      </div>
+
+      {distribOpen&&<DistributionModal trip={trip} members={members} costSettings={costSettings} patch={patch} flash={flash} onClose={()=>setDistribOpen(false)}/>}
+    </div>
+  );
+}
+
+function CostCategoryTile({title,icon:Icon,items,total,members,nameOf,expandable,readOnly,onAdd}){
+  const [exp,setExp]=useState(false);
+
+  return (
+    <div style={{...St.block,padding:0,overflow:"hidden"}}>
+      <button onClick={()=>setExp(!exp)} style={{width:"100%",background:"none",border:"none",padding:"14px",cursor:expandable?"pointer":"default",display:"flex",alignItems:"center",gap:12,textAlign:"left"}}>
+        <Icon style={{...ic(18),color:"var(--ember2)",flexShrink:0}}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:600,color:"var(--paper)"}}>{title}</div>
+          {items.length>0&&<div style={{fontSize:12,color:"var(--sage)",marginTop:2}}>{items.length} {items.length===1?"item":"items"}</div>}
+        </div>
+        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:700,color:"var(--gold)",flexShrink:0}}>
+          ${total.toFixed(2)}
+        </div>
+        {expandable&&<Ic.chev style={{...ic(16),color:"var(--sage)",transform:exp?"rotate(90deg)":"none",transition:"transform .2s",flexShrink:0}}/>}
+      </button>
+
+      {exp&&items.length>0&&(
+        <div style={{padding:"0 14px 14px",borderTop:"1px solid var(--line)"}}>
+          {items.map((item,i)=>(
+            <div key={item.id||i} style={{...St.itemRow,paddingBottom:10,marginBottom:10,...(i===items.length-1?{paddingBottom:0,marginBottom:0}:{})}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={St.itemTitle}>{item.title||item.name}</div>
+                <div style={St.itemMeta}>
+                  ${((item.cost||item.price)||0).toFixed(2)}
+                  {item.paidBy?` · paid by ${nameOf(item.paidBy)}`:""}
+                  {item.assignee?` · ${nameOf(item.assignee)}`:""}
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {adding&&expenseForm(saveAdd,"New expense")}
-
-      <div style={{display:"grid",gap:10}}>
-        {expenses.map(e=>(
-          editId===e.id
-            ? <div key={e.id}>{expenseForm(saveEdit,"Edit expense")}</div>
-            : (
-              <div key={e.id} style={{...St.block,padding:14,marginBottom:0,display:"flex",alignItems:"center",gap:12}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={St.itemTitle}>{e.name}</div>
-                  <div style={St.itemMeta}>
-                    ${(+e.amount||0).toFixed(2)} total{members.length>0?` · $${(+e.amount/n).toFixed(2)} each`:""}
-                  </div>
-                </div>
-                <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:700,color:"var(--paper)",flexShrink:0,marginRight:4}}>
-                  ${(+e.amount||0).toFixed(2)}
-                </div>
-                {!readOnly&&<button style={St.iconBtn} onClick={()=>openEdit(e)} aria-label="Edit"><Ic.edit style={ic(15)}/></button>}
-                {!readOnly&&<button style={St.iconBtn} onClick={()=>del(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
-              </div>
-            )
-        ))}
-      </div>
-
-      {expenses.length===0&&!adding&&(
-        <Empty icon={Ic.dollar} text="Add shared expenses like the campsite fee, firewood, ice, or propane. Costs split evenly across your crew."/>
-      )}
+      {items.length===0&&<div style={{padding:"14px",fontSize:12.5,color:"var(--sage)",textAlign:"center"}}>No items</div>}
     </div>
+  );
+}
+
+function DistributionModal({trip,members,costSettings,patch,flash,onClose}){
+  const [method,setMethod]=useState(costSettings.splitMethod||"evenly");
+  const [customPcts,setCustomPcts]=useState(costSettings.customPercentages||{});
+  const [subsetIds,setSubsetIds]=useState(costSettings.subsetMembers||[]);
+
+  const save=()=>{
+    const settings={splitMethod:method};
+    if(method==="custom") settings.customPercentages=customPcts;
+    if(method==="subset") settings.subsetMembers=subsetIds;
+    patch({costSettings:settings});
+    flash("Cost distribution updated");
+    onClose();
+  };
+
+  return (
+    <Modal title="Change Cost Distribution" onClose={onClose}>
+      <p style={St.sub}>Choose how shared costs are split among the crew.</p>
+
+      <Field label="Distribution method">
+        <select style={St.input} value={method} onChange={e=>setMethod(e.target.value)}>
+          <option value="evenly">Split evenly among all members</option>
+          <option value="custom">Custom percentages</option>
+          <option value="subset">Specific members only</option>
+        </select>
+      </Field>
+
+      {method==="custom"&&(
+        <div style={{marginTop:12,padding:12,background:"var(--pine)",borderRadius:10,border:"1px solid var(--line)"}}>
+          {members.map(m=>(
+            <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <span style={{flex:1}}>{m.name}</span>
+              <input type="number" min="0" max="100" step="1" style={{...St.input,width:80}} value={customPcts[m.id]||0}
+                onChange={e=>setCustomPcts({...customPcts,[m.id]:+e.target.value})}/>
+              <span style={{fontSize:12,color:"var(--sage)"}}>%</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {method==="subset"&&(
+        <div style={{marginTop:12,display:"grid",gap:8}}>
+          {members.map(m=>(
+            <label key={m.id} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px",background:"var(--pine)",borderRadius:10,border:"1px solid var(--line)"}}>
+              <input type="checkbox" checked={subsetIds.includes(m.id)}
+                onChange={e=>setSubsetIds(e.target.checked?[...subsetIds,m.id]:subsetIds.filter(id=>id!==m.id))}
+                style={{cursor:"pointer"}}/>
+              <span>{m.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      <div style={St.modalActions}>
+        <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
+        <button style={St.primaryBtn} onClick={save}><Ic.check style={ic(15)}/> Save</button>
+      </div>
+    </Modal>
   );
 }
 
