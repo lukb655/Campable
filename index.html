@@ -111,6 +111,12 @@ function lread(k,d){try{return JSON.parse(localStorage.getItem(k))??d;}catch{ret
 function lwrite(k,v){localStorage.setItem(k,JSON.stringify(v));}
 const localSubs=new Set();
 function localPing(){const all=lread(LK.trips,{});localSubs.forEach(fn=>fn(all));}
+const fieldNoteSubs=new Map();
+function pingFieldNotes(tripId){
+  const key=`campable:fieldNotes:${tripId}`;
+  const notes=lread(key,[]).sort((a,b)=>b.createdAt-a.createdAt);
+  (fieldNoteSubs.get(tripId)||new Set()).forEach(fn=>fn(notes));
+}
 
 /* simple non-cryptographic hash for the LOCAL fallback only.
    (Real security comes from Firebase Auth when configured.) */
@@ -245,6 +251,34 @@ const Data = {
         throw new Error("For security, please sign out and sign back in, then try again.");
       throw e;
     }
+  },
+  subscribeFieldNotes(tripId, cb){
+    if(!HAS_FB){
+      if(!fieldNoteSubs.has(tripId)) fieldNoteSubs.set(tripId,new Set());
+      const key=`campable:fieldNotes:${tripId}`;
+      const fn=()=>cb(lread(key,[]).sort((a,b)=>b.createdAt-a.createdAt));
+      fieldNoteSubs.get(tripId).add(fn); fn();
+      return ()=>fieldNoteSubs.get(tripId).delete(fn);
+    }
+    return db.collection("trips").doc(tripId).collection("fieldNotes")
+      .orderBy("createdAt","desc")
+      .onSnapshot(s=>cb(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.error(e));
+  },
+  async addFieldNote(tripId, note){
+    if(!HAS_FB){
+      const key=`campable:fieldNotes:${tripId}`;
+      const notes=lread(key,[]); const n={...note,id:uid()}; notes.unshift(n); lwrite(key,notes);
+      pingFieldNotes(tripId); return n;
+    }
+    const ref=await db.collection("trips").doc(tripId).collection("fieldNotes").add(note);
+    return {id:ref.id,...note};
+  },
+  async deleteFieldNote(tripId, noteId){
+    if(!HAS_FB){
+      const key=`campable:fieldNotes:${tripId}`;
+      lwrite(key,lread(key,[]).filter(n=>n.id!==noteId)); pingFieldNotes(tripId); return;
+    }
+    await db.collection("trips").doc(tripId).collection("fieldNotes").doc(noteId).delete();
   },
   async joinByCode(me, codeInput){
     const code=codeInput.trim().toUpperCase();
@@ -842,6 +876,71 @@ function TripShell({trip,me,flash,onBack,initialTab}){
   );
 }
 
+/* ---------------- FIELD NOTES ---------------- */
+function FieldNotesSection({trip, me, isAdmin}){
+  const [notes,setNotes]=useState([]);
+  const [text,setText]=useState("");
+  const [posting,setPosting]=useState(false);
+
+  useEffect(()=>{
+    const unsub=Data.subscribeFieldNotes(trip.id,setNotes);
+    return ()=>unsub?.();
+  },[trip.id]);
+
+  const fmtAge=(ts)=>{
+    const diff=Date.now()-ts;
+    if(diff<60000) return "just now";
+    if(diff<3600000) return `${Math.floor(diff/60000)}m ago`;
+    if(diff<86400000) return `${Math.floor(diff/3600000)}h ago`;
+    return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  };
+
+  const post=async()=>{
+    const t=text.trim(); if(!t||posting) return;
+    setPosting(true);
+    try{
+      await Data.addFieldNote(trip.id,{authorId:me.id,authorName:me.name,text:t,createdAt:Date.now()});
+      setText("");
+    }finally{ setPosting(false); }
+  };
+
+  const del=async(noteId)=>{
+    if(!confirm("Delete this note?")) return;
+    await Data.deleteFieldNote(trip.id,noteId);
+  };
+
+  return (
+    <div style={St.block}>
+      <div style={St.blockHead}><span>Field Notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
+      {notes.length===0
+        ? <div style={{fontSize:13,color:"var(--sage)",textAlign:"center",padding:"10px 0 6px"}}>No notes yet — be the first to post.</div>
+        : <div style={{maxHeight:260,overflowY:"auto",display:"grid",gap:8,marginBottom:10}}>
+            {notes.map(n=>(
+              <div key={n.id} style={{background:"var(--night)",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:12.5,fontWeight:700,color:"var(--ember2)"}}>{n.authorName}</span>
+                  <span style={{fontSize:11,color:"var(--mist)"}}>·</span>
+                  <span style={{fontSize:11,color:"var(--sage)"}}>{fmtAge(n.createdAt)}</span>
+                  {isAdmin &&
+                    <button style={{...St.iconBtn,marginLeft:"auto",padding:2}} onClick={()=>del(n.id)} aria-label="Delete note">
+                      <Ic.trash style={ic(13)}/>
+                    </button>}
+                </div>
+                <div style={{fontSize:13.5,lineHeight:1.5,color:"var(--paper)",whiteSpace:"pre-wrap"}}>{n.text}</div>
+              </div>
+            ))}
+          </div>}
+      <div style={{display:"flex",gap:8,marginTop:4}}>
+        <input style={{...St.input,fontSize:13}} placeholder="Leave a note…" value={text}
+          onChange={e=>setText(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();post();} }}/>
+        <button style={{...St.smallBtn,opacity:posting||!text.trim()?0.5:1}}
+          onClick={post} disabled={posting||!text.trim()}>Post</button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- OVERVIEW ---------------- */
 function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
   const allMealItems=(trip.meals||[]).reduce((a,m)=>[...a,...(m.items||[])],[]);
@@ -888,11 +987,13 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
         </div>
       </div>
 
+      <FieldNotesSection trip={trip} me={me} isAdmin={isAdmin}/>
+
       <div style={St.block}>
-        <div style={St.blockHead}><span>Field notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
+        <div style={St.blockHead}><span>Trip Notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
         {readOnly
           ? <div style={{fontSize:13.5,lineHeight:1.6,color:trip.notes?"var(--paper)":"var(--sage)",whiteSpace:"pre-wrap"}}>
-              {trip.notes||"No field notes."}
+              {trip.notes||"No trip notes."}
             </div>
           : <>
               <textarea style={St.notes} placeholder="Gear list, permits, dark-sky windows, bailout plan…"
