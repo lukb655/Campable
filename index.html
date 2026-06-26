@@ -117,6 +117,12 @@ function pingFieldNotes(tripId){
   const notes=lread(key,[]).sort((a,b)=>b.createdAt-a.createdAt);
   (fieldNoteSubs.get(tripId)||new Set()).forEach(fn=>fn(notes));
 }
+const messageSubs=new Map();
+function pingMessages(tripId){
+  const key=`campable:messages:${tripId}`;
+  const messages=lread(key,[]).sort((a,b)=>a.createdAt-b.createdAt);
+  (messageSubs.get(tripId)||new Set()).forEach(fn=>fn(messages));
+}
 
 /* simple non-cryptographic hash for the LOCAL fallback only.
    (Real security comes from Firebase Auth when configured.) */
@@ -295,6 +301,27 @@ const Data = {
     if(!memberIds.includes(me.id)){members.push(blankMember(me));memberIds.push(me.id);}
     await doc.ref.update({members,memberIds});
     return {id:doc.id,...t,members,memberIds};
+  },
+  subscribeMessages(tripId, cb){
+    if(!HAS_FB){
+      if(!messageSubs.has(tripId)) messageSubs.set(tripId,new Set());
+      const key=`campable:messages:${tripId}`;
+      const fn=()=>cb(lread(key,[]).sort((a,b)=>a.createdAt-b.createdAt));
+      messageSubs.get(tripId).add(fn); fn();
+      return ()=>messageSubs.get(tripId).delete(fn);
+    }
+    return db.collection("trips").doc(tripId).collection("messages")
+      .orderBy("createdAt","asc")
+      .onSnapshot(s=>cb(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.error(e));
+  },
+  async addMessage(tripId, msg){
+    if(!HAS_FB){
+      const key=`campable:messages:${tripId}`;
+      const messages=lread(key,[]); const m={...msg,id:uid(),createdAt:Date.now()}; messages.push(m); lwrite(key,messages);
+      pingMessages(tripId); return m;
+    }
+    const ref=await db.collection("trips").doc(tripId).collection("messages").add({...msg,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    return {id:ref.id,...msg,createdAt:Date.now()};
   }
 };
 
@@ -405,6 +432,7 @@ const Ic={
   warn:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>,
   flame:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/></svg>,
   shield:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 14h.01"/></svg>,
+  chat:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
 };
 const ic=(n)=>({width:n,height:n,flexShrink:0});
 const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
@@ -1229,6 +1257,110 @@ function MemberProfileModal({member,trip,me,isAdmin,onClose,onUpdate,fetchedPhot
   );
 }
 
+/* -------------------- GROUP CHAT -------------------- */
+function GroupChat({trip,me}){
+  const [messages,setMessages]=useState([]);
+  const [msgText,setMsgText]=useState("");
+  const [sending,setSending]=useState(false);
+  const messagesEndRef=useRef(null);
+
+  useEffect(()=>{
+    const unsub=Data.subscribeMessages(trip.id,msgs=>setMessages(msgs));
+    return ()=>unsub&&unsub();
+  },[trip.id]);
+
+  useEffect(()=>{
+    messagesEndRef.current?.scrollIntoView({behavior:"smooth"});
+  },[messages.length]);
+
+  const members=trip.members||[];
+  const nameOf=uid=>members.find(m=>m.id===uid)?.name||"Unknown";
+  const photoOf=uid=>members.find(m=>m.id===uid)?.photo||"";
+
+  const handleSend=async()=>{
+    if(!msgText.trim()||sending)return;
+    setSending(true);
+    try{
+      await Data.addMessage(trip.id,{
+        senderId:me.id,
+        senderName:me.name,
+        text:msgText.trim(),
+      });
+      setMsgText("");
+    }catch(e){
+      console.error("Failed to send message",e);
+    }finally{
+      setSending(false);
+    }
+  };
+
+  const formatTime=ts=>{
+    const d=new Date(ts);
+    const now=new Date();
+    const sameDay=d.toDateString()===now.toDateString();
+    if(sameDay){
+      return d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+    }
+    return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  };
+
+  return (
+    <div style={{...St.block,display:"flex",flexDirection:"column",height:440,marginBottom:16}}>
+      <div style={St.blockHead}><span>Messages</span><Ic.chat style={{...ic(13),color:"var(--sage)"}}/></div>
+
+      <div style={St.messagesBox}>
+        {messages.map(msg=>{
+          const sender=members.find(m=>m.id===msg.senderId);
+          const isSelf=msg.senderId===me.id;
+          return (
+            <div key={msg.id} style={{...St.messageRow,justifyContent:isSelf?"flex-end":"flex-start"}}>
+              {!isSelf&&(
+                <div style={{flexShrink:0}}>
+                  {sender?.photo
+                    ?<img src={sender.photo} alt="" style={{width:32,height:32,borderRadius:8,objectFit:"cover"}}/>
+                    :<div style={{width:32,height:32,borderRadius:8,background:"var(--mist)",display:"grid",placeItems:"center",fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:13}}>
+                      {(msg.senderName||"?").slice(0,1).toUpperCase()}
+                    </div>}
+                </div>
+              )}
+              <div style={{flex:1,maxWidth:"85%",alignItems:isSelf?"flex-end":"flex-start",display:"flex",flexDirection:"column"}}>
+                <div style={{fontSize:12.5,fontWeight:600,marginBottom:2,color:"var(--paper)"}}>
+                  {msg.senderName}{isSelf?" (you)":""}
+                </div>
+                <div style={{...St.messageBubble,background:isSelf?"var(--ember)":"var(--moss)",color:isSelf?"var(--night)":"var(--paper)"}}>
+                  <div style={St.messageText}>{msg.text}</div>
+                </div>
+                <div style={{...St.messageMeta,fontSize:11,marginTop:3}}>
+                  {formatTime(msg.createdAt)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={messagesEndRef}/>
+      </div>
+
+      <div style={St.inputBox}>
+        <textarea
+          style={{...St.messageInput,height:36}}
+          placeholder="Send a message..."
+          value={msgText}
+          onChange={e=>setMsgText(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();handleSend();}}}
+          disabled={sending}
+        />
+        <button
+          style={{...St.smallBtn,flexShrink:0,height:36,width:36,padding:0,display:"grid",placeItems:"center"}}
+          onClick={handleSend}
+          disabled={sending||!msgText.trim()}
+          aria-label="Send">
+          <Ic.share style={ic(15)}/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
   const members=trip.members||[]; const meals=trip.meals||[];
 
@@ -1301,6 +1433,8 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
         fetchedPhoto={fetchedPhotos[selectedMember.id]}
       />}
       {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
+
+      <GroupChat trip={trip} me={me}/>
 
       {isAdmin && !readOnly && (
         <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
@@ -2734,6 +2868,16 @@ const St={
 
   // Gallery
   galleryGrid:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5,marginTop:4},
+
+  // Chat
+  chatContainer:{display:"flex",flexDirection:"column",height:"100%",minHeight:400},
+  messagesBox:{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",display:"flex",flexDirection:"column",gap:8,padding:"12px 0",marginBottom:12},
+  messageRow:{display:"flex",gap:10,alignItems:"flex-start"},
+  messageBubble:{background:"var(--moss)",borderRadius:12,padding:"10px 14px",maxWidth:"85%"},
+  messageMeta:{fontSize:12,color:"var(--sage)",marginTop:4},
+  messageText:{fontSize:13.5,lineHeight:1.5,wordBreak:"break-word"},
+  inputBox:{display:"flex",gap:8,alignItems:"flex-end",padding:"12px 0",borderTop:"1px solid var(--line)"},
+  messageInput:{flex:1,background:"var(--night)",border:"1px solid var(--line)",borderRadius:10,color:"var(--paper)",padding:"10px 12px",fontSize:13.5,resize:"none",minHeight:40,maxHeight:100},
 
   toast:{position:"fixed",bottom:"calc(env(safe-area-inset-bottom) + 90px)",left:"50%",transform:"translateX(-50%)",
     background:"var(--pine)",border:"1px solid var(--ember)",borderRadius:12,padding:"11px 18px",fontSize:13.5,fontWeight:600,
