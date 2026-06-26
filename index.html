@@ -298,7 +298,7 @@ const Data = {
   }
 };
 
-const blankMember=(me)=>({id:me.id,name:me.name,email:me.email||"",emergency:"",photo:""});
+const blankMember=(me)=>({id:me.id,name:me.name,email:me.email||"",emergency:"",dietary:"",photo:""});
 
 /* ---------- image handling: compress to fast, small data URL ---------- */
 function fileToCompressedDataURL(file, maxDim=1200, quality=0.72){
@@ -1122,6 +1122,113 @@ const TRIP_ROLES=[
   {id:"navigation", label:"Navigation",   icon:Ic.nav},
 ];
 
+function MemberProfileModal({member,trip,me,isAdmin,onClose,onUpdate,fetchedPhoto}){
+  const isSelf=member.id===me.id;
+  const isOwner=member.id===trip.ownerId;
+  const canEdit=isSelf&&!trip.completed;
+  const photo=member.photo||fetchedPhoto||null;
+
+  const [emergency,setEmergency]=useState(member.emergency||"");
+  const [dietary,setDietary]=useState(member.dietary||"");
+
+  const save=()=>{
+    if(!canEdit)return;
+    onUpdate(member.id,{emergency,dietary});
+    onClose();
+  };
+
+  const responsibilities=trip.responsibilities||{};
+  const roles=TRIP_ROLES.filter(r=>responsibilities[r.id]===member.id);
+  const meals=trip.meals||[];
+  const cookingMeals=meals.filter(m=>m.responsible===member.id).map(m=>m.title);
+  const bringingItems=[];
+  meals.forEach(m=>(m.items||[]).forEach(i=>{
+    if(i.responsible===member.id) bringingItems.push(i.name+(i.qty?` (${i.qty})`:""));
+  }));
+
+  return (
+    <Modal title="Member Profile" onClose={onClose}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:20,gap:10}}>
+        {photo
+          ?<img src={photo} alt="" style={{width:80,height:80,borderRadius:20,objectFit:"cover",border:"2px solid var(--line)"}}/>
+          :<div style={{width:80,height:80,borderRadius:20,background:"var(--mist)",display:"grid",placeItems:"center",
+              fontFamily:"'Oswald',sans-serif",fontWeight:700,fontSize:32,color:"var(--paper)",flexShrink:0}}>
+            {member.name.slice(0,1).toUpperCase()}
+          </div>}
+        <div style={{textAlign:"center"}}>
+          <div style={{fontFamily:"'Oswald',sans-serif",fontSize:20,fontWeight:600,letterSpacing:.3}}>
+            {member.name}
+            {isOwner&&<span style={St.ownerBadge}>Owner</span>}
+            {isSelf&&<span style={St.youTag}>you</span>}
+          </div>
+          {member.email&&<div style={{fontSize:12.5,color:"var(--sage)",marginTop:3}}>{member.email}</div>}
+        </div>
+      </div>
+
+      {roles.length>0&&(
+        <div style={{marginBottom:16}}>
+          <div style={St.fieldLabel}>Trip Roles</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {roles.map(r=>(
+              <span key={r.id} style={{display:"inline-flex",alignItems:"center",gap:5,background:"var(--moss)",
+                color:"var(--paper)",padding:"5px 10px",borderRadius:8,fontSize:12.5,fontWeight:600}}>
+                <r.icon style={ic(13)}/>{r.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{marginBottom:12}}>
+        <div style={St.fieldLabel}>Emergency Contact</div>
+        {canEdit
+          ?<input style={St.input} placeholder="Name and phone number"
+              value={emergency} onChange={e=>setEmergency(e.target.value)}/>
+          :<div style={{fontSize:13.5,color:emergency?"var(--paper)":"var(--sage)",padding:"10px 12px",
+              background:"var(--night)",borderRadius:10}}>
+            {emergency||"Not provided"}
+          </div>}
+      </div>
+
+      <div style={{marginBottom:16}}>
+        <div style={St.fieldLabel}>Dietary Restrictions / Notes</div>
+        {canEdit
+          ?<input style={St.input} placeholder="Allergies, preferences, or notes"
+              value={dietary} onChange={e=>setDietary(e.target.value)}/>
+          :<div style={{fontSize:13.5,color:dietary?"var(--paper)":"var(--sage)",padding:"10px 12px",
+              background:"var(--night)",borderRadius:10}}>
+            {dietary||"None noted"}
+          </div>}
+      </div>
+
+      {(cookingMeals.length>0||bringingItems.length>0)&&(
+        <div style={{marginBottom:16}}>
+          <div style={St.fieldLabel}>Assignments</div>
+          {cookingMeals.length>0&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,fontSize:13}}>
+              <Ic.food style={{...ic(14),color:"var(--sage)",flexShrink:0}}/>
+              <span>{`Cook: ${cookingMeals.join(", ")}`}</span>
+            </div>
+          )}
+          {bringingItems.length>0&&(
+            <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+              <Ic.cart style={{...ic(14),color:"var(--sage)",flexShrink:0}}/>
+              <span>{`Bringing: ${bringingItems.join(", ")}`}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {canEdit&&(
+        <div style={St.modalActions}>
+          <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
+          <button style={St.primaryBtn} onClick={save}>Save</button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
   const members=trip.members||[]; const meals=trip.meals||[];
 
@@ -1154,9 +1261,11 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
     });
   },[members.map(m=>m.id+(m.photo||"")).join()]);
 
+  const [selectedMember,setSelectedMember]=useState(null);
+
   const [addName,setAddName]=useState("");
   const addMember=()=>{ if(!isAdmin)return; if(!addName.trim())return;
-    patch({members:[...members,{id:uid(),name:addName.trim(),email:"",emergency:"",photo:""}]});
+    patch({members:[...members,{id:uid(),name:addName.trim(),email:"",emergency:"",dietary:"",photo:""}]});
     setAddName(""); flash("Added to crew");
   };
   const updateMember=(id,fields)=>patch({members:members.map(m=>m.id===id?{...m,...fields}:m)});
@@ -1182,6 +1291,15 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
 
   return (
     <div style={St.pane}>
+      {selectedMember && <MemberProfileModal
+        member={selectedMember}
+        trip={trip}
+        me={me}
+        isAdmin={isAdmin}
+        onClose={()=>setSelectedMember(null)}
+        onUpdate={(id,fields)=>{updateMember(id,fields);setSelectedMember(prev=>prev?{...prev,...fields}:null);}}
+        fetchedPhoto={fetchedPhotos[selectedMember.id]}
+      />}
       {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
 
       {isAdmin && !readOnly && (
@@ -1255,7 +1373,7 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
           const isSelf=m.id===me.id;
           const isOwner=m.id===trip.ownerId;
           return (
-            <div key={m.id} style={St.memberCard}>
+            <div key={m.id} style={{...St.memberCard,cursor:"pointer"}} onClick={()=>setSelectedMember(m)}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
                 {(m.photo||fetchedPhotos[m.id])
                   ? <img src={m.photo||fetchedPhotos[m.id]} alt="" style={St.memberAvatarImg}/>
@@ -1268,7 +1386,10 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
                     {Math.abs(t.net)<0.005?"settled up":t.net>0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
                   </div>}
                 </div>
-                {isAdmin && !readOnly && <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  {isAdmin && !readOnly && <button style={St.iconBtn} onClick={e=>{e.stopPropagation();delMember(m.id);}} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
+                  <Ic.chev style={{...ic(14),color:"var(--mist)",flexShrink:0}}/>
+                </div>
               </div>
 
               {trip.duesEnabled && <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>}
@@ -1285,15 +1406,12 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
                   {brings.length?`Bringing: ${brings.join(", ")}`:"Nothing assigned to bring"}
                 </span>
               </div>
-
               <div style={St.memberRow}>
                 <Ic.sos style={{...ic(14),color:"var(--sage)"}}/>
-                {readOnly
-                  ? <span style={{fontSize:13,color:m.emergency?"var(--paper)":"var(--sage)"}}>{m.emergency||"No emergency contact"}</span>
-                  : <input style={St.inlineInput} placeholder="Emergency contact (name + phone)"
-                      defaultValue={m.emergency} onBlur={e=>updateMember(m.id,{emergency:e.target.value})}/>}
+                <span style={{fontSize:13,color:m.emergency?"var(--paper)":"var(--sage)"}}>
+                  {m.emergency||(isSelf&&!readOnly?"Tap to add emergency contact":"No emergency contact")}
+                </span>
               </div>
-
             </div>
           );
         })}
