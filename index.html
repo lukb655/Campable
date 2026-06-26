@@ -884,16 +884,16 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
                   : <div style={St.avatar}>{m.name.slice(0,1).toUpperCase()}</div>}
                 <div style={{flex:1,minWidth:0}}>
                   <div style={St.itemTitle}>{m.name}{isSelf && <span style={St.youTag}>you</span>}</div>
-                  <div style={{...St.netPill,marginTop:4,display:"inline-flex",
+                  {trip.duesEnabled && <div style={{...St.netPill,marginTop:4,display:"inline-flex",
                     background:t.net>=0?"rgba(127,169,155,.15)":"rgba(232,104,44,.15)",
                     color:t.net>=0?"var(--sage)":"var(--ember2)"}}>
                     {Math.abs(t.net)<0.005?"settled up":t.net>0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
-                  </div>
+                  </div>}
                 </div>
                 {isAdmin && <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
               </div>
 
-              <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>
+              {trip.duesEnabled && <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>}
 
               <div style={St.memberRow}>
                 <Ic.food style={{...ic(14),color:"var(--sage)"}}/>
