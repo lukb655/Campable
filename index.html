@@ -391,6 +391,7 @@ function seedFor(me){
         cost:38,paidBy:me.id,forAll:true},
     ],
     trails:[{id:uid(),name:"Bear Rocks Loop",miles:4.2,difficulty:"Moderate",lat:39.0489,lng:-79.3010,done:false}],
+    waypoints:[{id:uid(),name:"Bear Rocks Vista",type:"Vista",lat:39.0489,lng:-79.3010}],
     photos:[],
     extras:[{id:uid(),name:"Coffee",category:"Drink",price:12,assignee:me.id}],
   };
@@ -434,6 +435,9 @@ const Ic={
   flame:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/></svg>,
   shield:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 14h.01"/></svg>,
   chat:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  vista:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12c0-2.2 1.79-4 4-4h12c2.21 0 4 1.79 4 4M2 12h20M2 12c0 2.21 1.79 4 4 4h12c2.21 0 4-1.79 4-4M6 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>,
+  trail:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 11a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-1a1 1 0 0 0-1-1h-4zM3 8v8M21 8v8M12 2c-2 1-4 2-5 4M12 2c2 1 4 2 5 4M2 14c1 2 2 4 4 5M22 14c-1 2-2 4-4 5"/></svg>,
+  marker:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2c-3.3 0-6 2.7-6 6 0 4 6 10 6 10s6-6 6-10c0-3.3-2.7-6-6-6z"/><circle cx="12" cy="8" r="2"/></svg>,
 };
 const ic=(n)=>({width:n,height:n,flexShrink:0});
 const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
@@ -1034,7 +1038,7 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
     ["Packing list complete",allMealItems.length>0&&allMealItems.every(i=>i.got)],
     ["Costs settled",trip.duesEnabled?(trip.members||[]).every(m=>m.duesPaid):(trip.expenses||[]).length>0],
     ["Itinerary planned",(trip.events||[]).length>=1],
-    ["Waypoints added",(trip.trails||[]).some(t=>t.lat&&t.lng)],
+    ["Waypoints added",(trip.waypoints||[]).length>0],
   ];
   const pct=Math.round(tasks.filter(t=>t[1]).length/tasks.length*100);
 
@@ -2549,14 +2553,156 @@ function PackingListPrintView({items,members,hasCategories,grouped,nameOf,onClos
 
 /* ---------------- WAYPOINTS ---------------- */
 function WaypointsTab({trip,me,patch,flash,readOnly}){
+  const waypoints=trip.waypoints||[];
+  const events=trip.events||[];
+  const members=trip.members||[];
+
+  const [addWp,setAddWp]=useState(false);
+  const [pick,setPick]=useState(false);
+  const [preset,setPreset]=useState(null);
+  const [addToItin,setAddToItin]=useState(null);
+  const [delConfirm,setDelConfirm]=useState(null);
+
+  const tripDays=useMemo(()=>{
+    if(!trip.start) return [{v:"Day 1",l:"Day 1"},{v:"Day 2",l:"Day 2"},{v:"Day 3",l:"Day 3"},{v:"Day 4",l:"Day 4"},{v:"Day 5",l:"Day 5"}];
+    const start=new Date(trip.start+"T00:00");
+    const end=trip.end?new Date(trip.end+"T00:00"):new Date(start.getTime()+4*86400000);
+    const days=[];
+    for(let d=new Date(start);d<=end;d=new Date(d.getTime()+86400000))
+      days.push({v:d.toISOString().slice(0,10),l:d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})});
+    return days;
+  },[trip.start,trip.end]);
+
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!ref.current || waypoints.length===0) return;
+    const center=waypoints.length?[+waypoints[0].lat,+waypoints[0].lng]:[39.0476,-79.3074];
+    const map=L.map(ref.current,{attributionControl:false}).setView(center,12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18}).addTo(map);
+
+    const bounds=[];
+    waypoints.forEach(p=>{
+      const icon=p.type==="Vista"?Ic.vista:p.type==="Trail"?Ic.trail:Ic.marker;
+      const color=p.type==="Vista"?"#E8B23C":p.type==="Trail"?"#7FA99B":"#E8682C";
+      const customIcon=L.divIcon({className:"",html:`<div style="background:${color};width:24px;height:24px;border-radius:50%;display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.4)"><svg style="width:13px;height:13px;color:white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">${p.type==="Vista"?'<path d="M2 12c0-2.2 1.79-4 4-4h12c2.21 0 4 1.79 4 4M2 12h20M2 12c0 2.21 1.79 4 4 4h12c2.21 0 4-1.79 4-4M6 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/>':p.type==="Trail"?'<path d="M12 2c-3.3 0-6 2.7-6 6 0 4 6 10 6 10s6-6 6-10c0-3.3-2.7-6-6-6z"/><circle cx="12" cy="8" r="2"/>':'<path d="M12 2c-3.3 0-6 2.7-6 6 0 4 6 10 6 10s6-6 6-10c0-3.3-2.7-6-6-6z"/><circle cx="12" cy="8" r="2"/>'}</svg></div>`,iconSize:[24,24],iconAnchor:[12,24]});
+      L.marker([+p.lat,+p.lng],{icon:customIcon}).addTo(map).bindPopup(`<b>${p.name}</b><br>${p.type}${p.mileage?` · ${p.mileage}mi`:""}`);
+      bounds.push([+p.lat,+p.lng]);
+    });
+    if(bounds.length>0) map.fitBounds(L.latLngBounds(bounds).pad(0.2));
+    setTimeout(()=>map.invalidateSize(),120);
+    return ()=>map.remove();
+  },[waypoints.map(w=>w.id+w.lat+w.lng).join()]);
+
+  const addWaypoint=w=>{
+    const toAdd={id:uid(),name:w.name,type:w.type,lat:w.lat?+w.lat:null,lng:w.lng?+w.lng:null};
+    if(w.type==="Trail" && w.mileage) toAdd.mileage=+w.mileage;
+    if(w.type==="Other Point" && w.description) toAdd.description=w.description;
+    patch({waypoints:[...waypoints,toAdd]});
+    flash("Waypoint added");setAddWp(false);setPreset(null);
+  };
+
+  const delWaypoint=id=>patch({waypoints:waypoints.filter(w=>w.id!==id)});
+
+  const addToItinerary=data=>{
+    const newEvent={id:uid(),...data};
+    patch({events:[...events,newEvent]});
+    flash("Added to itinerary");setAddToItin(null);
+  };
+
+  const getIconColor=type=>type==="Vista"?"var(--gold)":type==="Trail"?"var(--sage)":"var(--ember2)";
+  const getIcon=type=>type==="Vista"?Ic.vista:type==="Trail"?Ic.trail:Ic.marker;
+
   return (
     <div style={St.pane}>
-      <div style={{...St.block,textAlign:"center",padding:"40px 20px 36px"}}>
-        <Ic.pin style={{...ic(40),color:"var(--ember2)",margin:"0 auto 14px",display:"block"}}/>
-        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:600,marginBottom:8,letterSpacing:.5}}>Waypoints</div>
-        <div style={{color:"var(--sage)",fontSize:13,lineHeight:1.6}}>Trails and map waypoints live in the Itinerary tab.</div>
+      {/* ── MAP ── */}
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Map</h2>
+        {!readOnly&&<button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Pick on map</button>}
       </div>
+      {waypoints.length>0?<div ref={ref} style={{...St.mapBig,marginBottom:20}}/>:<Empty icon={Ic.map} text="Add waypoints to see them on the map."/>}
+
+      {/* ── WAYPOINTS ── */}
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Waypoints</h2>
+        {!readOnly&&<button style={St.smallBtn} onClick={()=>setAddWp(true)}><Ic.plus style={ic(14)}/> Add</button>}
+      </div>
+      {waypoints.length===0&&<Empty icon={Ic.pin} text="Mark scenic vistas, trails, and points of interest."/>}
+      <div style={{display:"grid",gap:12,marginBottom:24}}>
+        {waypoints.map(w=>(
+          <div key={w.id} style={{...St.card2,padding:14}}>
+            <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
+              <div style={{color:getIconColor(w.type),flexShrink:0,marginTop:2}}>
+                {getIcon(w.type)(ic(18))}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,marginBottom:2}}>{w.name}</div>
+                <div style={{fontSize:12,color:"var(--sage)"}}>{w.type}{w.mileage?` · ${w.mileage}mi`:""}${w.description?` · ${w.description}`:""}{w.lat?` · ${(+w.lat).toFixed(4)}, ${(+w.lng).toFixed(4)}`:""}</div>
+              </div>
+              {!readOnly&&<button style={St.iconBtn} onClick={()=>setDelConfirm(w.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
+            </div>
+            {!readOnly&&<button style={{...St.ghostBtn,width:"100%",justifyContent:"center",fontSize:13}} onClick={()=>setAddToItin(w)}>+ Add to Itinerary</button>}
+          </div>
+        ))}
+      </div>
+
+      {/* ── MODALS ── */}
+      {addWp&&!readOnly&&<WaypointForm onClose={()=>{setAddWp(false);setPreset(null);}} onSave={addWaypoint} preset={preset} onPick={()=>setPick(true)}/>}
+      {pick&&<PinPicker startLat={preset?.lat} startLng={preset?.lng} title="Pick waypoint location" onClose={()=>setPick(false)} onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setAddWp(true);}}/>}
+      {addToItin&&<AddToItineraryForm waypoint={addToItin} tripDays={tripDays} onClose={()=>setAddToItin(null)} onSave={addToItinerary}/>}
+      {delConfirm&&<Modal title="Remove waypoint?" onClose={()=>setDelConfirm(null)}>
+        <p style={St.sub}>This can't be undone.</p>
+        <div style={St.modalActions}>
+          <button style={St.ghostBtn} onClick={()=>setDelConfirm(null)}>Keep it</button>
+          <button style={{...St.primaryBtn,background:"var(--danger)"}} onClick={()=>{delWaypoint(delConfirm);flash("Waypoint removed");setDelConfirm(null);}}><Ic.trash style={ic(15)}/> Remove</button>
+        </div>
+      </Modal>}
     </div>
+  );
+}
+
+function WaypointForm({onClose,onSave,preset,onPick}){
+  const [v,setV]=useState({name:"",type:"Trail",mileage:"",description:"",lat:preset?.lat||"",lng:preset?.lng||""});
+  const submit=()=>{if(!v.name.trim()||!v.type) return; onSave(v);};
+  return (
+    <Modal title="Add Waypoint" onClose={onClose}>
+      <Field label="Name"><input style={St.input} type="text" value={v.name} onChange={e=>setV({...v,name:e.target.value})} placeholder="Vista name" autoFocus/></Field>
+      <Field label="Type"><select style={St.input} value={v.type} onChange={e=>setV({...v,type:e.target.value})}>
+        <option value="Vista">Vista</option>
+        <option value="Trail">Trail</option>
+        <option value="Other Point">Other Point</option>
+      </select></Field>
+      {v.type==="Trail"&&<Field label="Mileage (optional)"><input style={St.input} type="number" value={v.mileage} onChange={e=>setV({...v,mileage:e.target.value})} placeholder="e.g. 2.5"/></Field>}
+      {v.type==="Other Point"&&<Field label="Description (optional)"><textarea style={{...St.input,fontFamily:"inherit",resize:"none",minHeight:60}} value={v.description} onChange={e=>setV({...v,description:e.target.value})} placeholder="What's special about this spot?"/></Field>}
+      <Field label="Coordinates (optional)">
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input style={{...St.input,flex:1}} type="number" step="0.0001" value={v.lat} onChange={e=>setV({...v,lat:e.target.value})} placeholder="Latitude"/>
+          <input style={{...St.input,flex:1}} type="number" step="0.0001" value={v.lng} onChange={e=>setV({...v,lng:e.target.value})} placeholder="Longitude"/>
+        </div>
+        <button style={{...St.ghostBtn,width:"100%",justifyContent:"center",fontSize:13}} onClick={onPick}><Ic.map style={ic(14)}/> Pick on map</button>
+      </Field>
+      <div style={St.modalActions}>
+        <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
+        <button style={St.primaryBtn} onClick={submit} disabled={!v.name.trim()||!v.type}><Ic.check style={ic(15)}/> Add</button>
+      </div>
+    </Modal>
+  );
+}
+
+function AddToItineraryForm({waypoint,tripDays,onClose,onSave}){
+  const [v,setV]=useState({title:waypoint.name,day:tripDays[0]?.v||"",time:"",type:"Activity",notes:"",waypointId:waypoint.id});
+  const submit=()=>{if(!v.title.trim()||!v.day) return; onSave(v);};
+  return (
+    <Modal title="Add to Itinerary" onClose={onClose}>
+      <Field label="Event name"><input style={St.input} type="text" value={v.title} onChange={e=>setV({...v,title:e.target.value})} autoFocus/></Field>
+      <Field label="Day"><select style={St.input} value={v.day} onChange={e=>setV({...v,day:e.target.value})}>
+        {tripDays.map(d=><option key={d.v} value={d.v}>{d.l}</option>)}
+      </select></Field>
+      <Field label="Time (optional)"><input style={St.input} type="time" value={v.time} onChange={e=>setV({...v,time:e.target.value})}/></Field>
+      <div style={St.modalActions}>
+        <button style={St.ghostBtn} onClick={onClose}>Cancel</button>
+        <button style={St.primaryBtn} onClick={submit} disabled={!v.title.trim()||!v.day}><Ic.check style={ic(15)}/> Add to itinerary</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -2805,7 +2951,7 @@ const WIDGET_DEFS=[
   {id:"crew",     label:"Crew",      icon:Ic.users,  get:(t)=>(t.members||[]).length},
   {id:"days",     label:"Days",      icon:Ic.cal,    get:(t)=>t.start&&t.end?Math.round((new Date(t.end+"T00:00")-new Date(t.start+"T00:00"))/86400000)+1:"—"},
   {id:"nights",   label:"Nights",    icon:Ic.tent,   get:(t)=>t.start&&t.end?Math.round((new Date(t.end+"T00:00")-new Date(t.start+"T00:00"))/86400000):"—"},
-  {id:"waypoints",label:"Waypoints", icon:Ic.pin,    get:(t)=>(t.trails||[]).filter(x=>x.lat&&x.lng).length},
+  {id:"waypoints",label:"Waypoints", icon:Ic.pin,    get:(t)=>(t.waypoints||[]).length},
   {id:"trails",   label:"Trails",    icon:Ic.mtn,    get:(t)=>(t.trails||[]).length},
   {id:"events",   label:"Events",    icon:Ic.cal,    get:(t)=>(t.events||[]).length},
   {id:"photos",   label:"Photos",    icon:Ic.img,    get:(t)=>(t.photos||[]).length},
