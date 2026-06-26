@@ -403,6 +403,8 @@ const Ic={
   checkCircle:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>,
   archive:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>,
   warn:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>,
+  flame:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/></svg>,
+  shield:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 14h.01"/></svg>,
 };
 const ic=(n)=>({width:n,height:n,flexShrink:0});
 const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
@@ -1113,6 +1115,13 @@ function CampsiteCard({trip,patch,flash}){
 }
 
 /* ---------------- CREW (who owes + photos + items + emergency) ---------------- */
+const TRIP_ROLES=[
+  {id:"cook",       label:"Cook",         icon:Ic.food},
+  {id:"fireStarter",label:"Fire Starter", icon:Ic.flame},
+  {id:"firstAid",   label:"First Aid",    icon:Ic.shield},
+  {id:"navigation", label:"Navigation",   icon:Ic.nav},
+];
+
 function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
   const members=trip.members||[]; const meals=trip.meals||[];
 
@@ -1164,6 +1173,13 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
     return out;
   };
 
+  const responsibilities=trip.responsibilities||{};
+  const nameOf=uid=>members.find(m=>m.id===uid)?.name||null;
+  const assignRole=(roleId,userId)=>{
+    if(!isAdmin)return;
+    patch({responsibilities:{...responsibilities,[roleId]:userId||null}});
+  };
+
   return (
     <div style={St.pane}>
       {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
@@ -1202,6 +1218,34 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
           )}
         </div>
       )}
+
+      <div style={{...St.block,marginBottom:16}}>
+        <div style={St.blockHead}><span>Responsibilities</span><Ic.checkCircle style={{...ic(13),color:"var(--sage)"}}/></div>
+        <div style={{display:"grid",gap:8}}>
+          {TRIP_ROLES.map(role=>{
+            const assignedId=responsibilities[role.id]||"";
+            const assignedName=assignedId?nameOf(assignedId):null;
+            return (
+              <div key={role.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",
+                background:"var(--night)",borderRadius:10}}>
+                <role.icon style={{...ic(15),color:"var(--sage)",flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:600,flex:"0 0 102px",color:"var(--paper)"}}>{role.label}</span>
+                {isAdmin&&!readOnly
+                  ?<select style={{flex:1,background:"var(--night)",border:"1px solid var(--line)",
+                      borderRadius:8,color:assignedId?"var(--paper)":"var(--sage)",padding:"5px 8px",
+                      fontSize:13,outline:"none"}}
+                      value={assignedId} onChange={e=>assignRole(role.id,e.target.value)}>
+                      <option value="">Unassigned</option>
+                      {sortedMembers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  :<span style={{flex:1,fontSize:13,color:assignedName?"var(--paper)":"var(--sage)"}}>
+                      {assignedName||"Unassigned"}
+                    </span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       <div style={{display:"grid",gap:14}}>
         {sortedMembers.map(m=>{
