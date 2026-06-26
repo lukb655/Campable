@@ -668,7 +668,7 @@ function TripShell({trip,me,flash,onBack}){
     {id:"plan",label:"Overview",icon:Ic.pack},
     {id:"crew",label:"Crew",icon:Ic.users},
     {id:"meals",label:"Meals",icon:Ic.food},
-    {id:"map",label:"Map",icon:Ic.map},
+    {id:"itinerary",label:"Itinerary",icon:Ic.cal},
     ...(isAdmin?[{id:"settings",label:"Settings",icon:Ic.gear}]:[]),
   ];
   return (
@@ -688,7 +688,7 @@ function TripShell({trip,me,flash,onBack}){
           {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin}/>}
           {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>}
           {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
-          {tab==="map" && <MapTab trip={trip} patch={patch} flash={flash}/>}
+          {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash}/>}
           {tab==="settings" && isAdmin && <TripSettingsTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
         </div>
       </div>
@@ -734,8 +734,6 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
         <Stat icon={Ic.food} label="Meals" value={(trip.meals||[]).length}/>
         <Stat icon={Ic.dollar} label="Food cost" value={`$${cost.toFixed(0)}`}/>
       </div>
-
-      <GroupGallery trip={trip} patch={patch} flash={flash}/>
 
       <DuesSection trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>
 
@@ -804,7 +802,7 @@ function CampsiteCard({trip,patch,flash}){
 
 /* ---------------- CREW (who owes + photos + items + emergency) ---------------- */
 function CrewTab({trip,me,patch,flash,isAdmin}){
-  const members=trip.members||[]; const meals=trip.meals||[]; const photos=trip.photos||[];
+  const members=trip.members||[]; const meals=trip.meals||[];
 
   // cost tally
   const tally=useMemo(()=>{
@@ -838,16 +836,6 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
     return out;
   };
 
-  const addPhotos=async(mid,fileList)=>{
-    const files=Array.from(fileList).slice(0,6);
-    try{
-      const added=[];
-      for(const f of files){ const d=await fileToCompressedDataURL(f); added.push({id:uid(),by:mid,data:d,ts:Date.now()}); }
-      patch({photos:[...photos,...added]}); flash(`${added.length} photo${added.length>1?"s":""} added`);
-    }catch(e){ flash(e.message||"Couldn't add photo"); }
-  };
-  const delPhoto=(pid)=>patch({photos:photos.filter(p=>p.id!==pid)});
-
   return (
     <div style={St.pane}>
       {(isAdmin||trip.allowCrewShareCode) && <ShareCard trip={trip} flash={flash}/>}
@@ -862,7 +850,6 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
         {members.map(m=>{
           const t=tally[m.id]||{paid:0,share:0,net:0};
           const resp=responsibilities(m.id);
-          const theirPhotos=photos.filter(p=>p.by===m.id);
           const isSelf=m.id===me.id;
           return (
             <div key={m.id} style={St.memberCard}>
@@ -896,25 +883,6 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
                   defaultValue={m.emergency} onBlur={e=>updateMember(m.id,{emergency:e.target.value})}/>
               </div>
 
-              <div style={{marginTop:10}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <span style={St.miniLabel}>Photos from {m.name.split(" ")[0]}</span>
-                  <label style={St.uploadChip}>
-                    <Ic.plus style={ic(13)}/> Add
-                    <input type="file" accept="image/*" multiple style={{display:"none"}}
-                      onChange={e=>{addPhotos(m.id,e.target.files);e.target.value="";}}/>
-                  </label>
-                </div>
-                {theirPhotos.length>0 &&
-                  <div style={St.photoStrip}>
-                    {theirPhotos.map(p=>(
-                      <div key={p.id} style={St.photoThumb}>
-                        <img src={p.data} alt="" style={St.photoImg}/>
-                        <button style={St.photoDel} onClick={()=>delPhoto(p.id)} aria-label="Delete photo"><Ic.x style={ic(12)}/></button>
-                      </div>
-                    ))}
-                  </div>}
-              </div>
             </div>
           );
         })}
@@ -1215,47 +1183,6 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
   );
 }
 
-/* ---------------- GROUP GALLERY ---------------- */
-function GroupGallery({trip,patch,flash}){
-  const photos=trip.photos||[];
-  const members=trip.members||[];
-  const getName=id=>members.find(m=>m.id===id)?.name||"";
-  const [view,setView]=useState(null);
-
-  if(photos.length===0) return null;
-
-  const delPhoto=pid=>{patch({photos:photos.filter(p=>p.id!==pid)});flash("Photo removed");setView(null);};
-
-  return (
-    <div style={St.block}>
-      <div style={St.blockHead}>
-        <span>Group Gallery</span>
-        <span style={{...St.miniLabel,color:"var(--sage)"}}>{photos.length} photo{photos.length!==1?"s":""}</span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
-        {[...photos].reverse().map(p=>(
-          <div key={p.id} style={{paddingBottom:"100%",position:"relative",borderRadius:10,overflow:"hidden",cursor:"pointer"}}
-            onClick={()=>setView(p)}>
-            <img src={p.data} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
-          </div>
-        ))}
-      </div>
-      {view&&(
-        <div style={St.overlay} onClick={()=>setView(null)}>
-          <div style={{position:"relative",maxWidth:500,width:"100%",padding:"0 4px"}} onClick={e=>e.stopPropagation()}>
-            <img src={view.data} alt="" style={{width:"100%",borderRadius:14,display:"block"}}/>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 2px 0"}}>
-              <span style={{fontSize:12,color:"var(--sage)"}}>by {getName(view.by)}</span>
-              <button style={St.dangerBtn} onClick={()=>delPhoto(view.id)}><Ic.trash style={ic(14)}/> Remove</button>
-            </div>
-            <button style={{position:"absolute",top:8,right:12,background:"rgba(0,0,0,.6)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer"}}
-              onClick={()=>setView(null)}><Ic.x style={{...ic(18),color:"var(--paper)"}}/></button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ---------------- DUES SECTION (overview) ---------------- */
 function DuesSection({trip,me,patch,flash,isAdmin}){
@@ -1297,11 +1224,43 @@ function DuesSection({trip,me,patch,flash,isAdmin}){
   );
 }
 
-/* ---------------- MAP (per-trip: campsite + waypoints) ---------------- */
-function MapTab({trip,patch,flash}){
-  const ref=useRef(null);
-  const [open,setOpen]=useState(false); const [pick,setPick]=useState(false); const [preset,setPreset]=useState(null);
+/* ---------------- ITINERARY (schedule + map + photos) ---------------- */
+function ItineraryTab({trip,me,patch,flash}){
+  const members=trip.members||[];
   const trails=trip.trails||[];
+  const photos=trip.photos||[];
+  const events=trip.events||[];
+
+  /* ── schedule ── */
+  const [addEvt,setAddEvt]=useState(false);
+
+  const tripDays=useMemo(()=>{
+    if(!trip.start) return [{v:"Day 1",l:"Day 1"},{v:"Day 2",l:"Day 2"},{v:"Day 3",l:"Day 3"},{v:"Day 4",l:"Day 4"},{v:"Day 5",l:"Day 5"}];
+    const start=new Date(trip.start+"T00:00");
+    const end=trip.end?new Date(trip.end+"T00:00"):new Date(start.getTime()+4*86400000);
+    const days=[];
+    for(let d=new Date(start);d<=end;d=new Date(d.getTime()+86400000))
+      days.push({v:d.toISOString().slice(0,10),l:d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})});
+    return days;
+  },[trip.start,trip.end]);
+
+  const byDay=useMemo(()=>{
+    const g={}; tripDays.forEach(d=>{g[d.v]=[];});
+    [...events].sort((a,b)=>(a.day+"|"+(a.time||"")).localeCompare(b.day+"|"+(b.time||""))).forEach(e=>{
+      if(g[e.day]) g[e.day].push(e); else g[e.day]=[e];
+    });
+    return g;
+  },[events,tripDays]);
+
+  const addEvent=e=>{patch({events:[...events,{id:uid(),...e}]});flash("Event added");setAddEvt(false);};
+  const delEvent=id=>patch({events:events.filter(e=>e.id!==id)});
+  const eventTypes=["Activity","Hike","Meal","Travel","Other"];
+
+  /* ── map ── */
+  const ref=useRef(null);
+  const [openTrail,setOpenTrail]=useState(false);
+  const [pick,setPick]=useState(false);
+  const [preset,setPreset]=useState(null);
   const waypoints=trails.filter(t=>t.lat&&t.lng);
 
   useEffect(()=>{
@@ -1323,53 +1282,123 @@ function MapTab({trip,patch,flash}){
     if(bounds.length>1) map.fitBounds(L.latLngBounds(bounds).pad(0.3));
     setTimeout(()=>map.invalidateSize(),120);
     return ()=>map.remove();
-  },[trip.id, trip.campLat, trip.campLng, trails.map(t=>t.id+t.lat+t.lng).join()]);
+  },[trip.id,trip.campLat,trip.campLng,trails.map(t=>t.id+t.lat+t.lng).join()]);
 
-  const addTrail=(t)=>{
+  const addTrail=t=>{
     patch({trails:[...trails,{id:uid(),done:false,name:t.name,miles:+t.miles||0,difficulty:t.difficulty,
       lat:t.lat?+t.lat:null,lng:t.lng?+t.lng:null}]});
-    flash("Trail added"); setOpen(false); setPreset(null);
+    flash("Trail added");setOpenTrail(false);setPreset(null);
   };
-  const delTrail=(id)=>patch({trails:trails.filter(t=>t.id!==id)});
-  const toggleTrail=(id)=>patch({trails:trails.map(t=>t.id===id?{...t,done:!t.done}:t)});
+  const delTrail=id=>patch({trails:trails.filter(t=>t.id!==id)});
+  const toggleTrail=id=>patch({trails:trails.map(t=>t.id===id?{...t,done:!t.done}:t)});
+
+  /* ── photos ── */
+  const [viewPhoto,setViewPhoto]=useState(null);
+  const getName=id=>members.find(m=>m.id===id)?.name||"Someone";
+
+  const addPhotos=async fileList=>{
+    const files=Array.from(fileList).slice(0,6);
+    try{
+      const added=[];
+      for(const f of files){const d=await fileToCompressedDataURL(f);added.push({id:uid(),by:me.id,data:d,ts:Date.now()});}
+      patch({photos:[...photos,...added]});flash(`${added.length} photo${added.length>1?"s":""} added`);
+    }catch(e){flash(e.message||"Couldn't add photo");}
+  };
+  const delPhoto=pid=>{patch({photos:photos.filter(p=>p.id!==pid)});flash("Photo removed");setViewPhoto(null);};
 
   return (
     <div style={St.pane}>
+
+      {/* ── SCHEDULE ── */}
       <div style={St.listHead}>
-        <h2 style={St.h2}>Trip map</h2>
+        <h2 style={St.h2}>Schedule</h2>
+        <button style={St.smallBtn} onClick={()=>setAddEvt(true)}><Ic.plus style={ic(14)}/> Event</button>
+      </div>
+      {events.length===0 && <Empty icon={Ic.cal} text="Add activities and events to build your day-by-day itinerary."/>}
+      {tripDays.filter(d=>(byDay[d.v]||[]).length>0).map(d=>(
+        <div key={d.v} style={{marginBottom:16}}>
+          <div style={St.yearLabel}>
+            <span style={{...St.yearNum,fontSize:12,letterSpacing:1}}>{d.l}</span>
+            <span style={St.yearLine}/>
+          </div>
+          <div style={{display:"grid",gap:8}}>
+            {(byDay[d.v]||[]).map(e=>(
+              <div key={e.id} style={St.itemRow}>
+                <div style={{...St.dayChip,minWidth:52,fontSize:11}}>{e.time||"—"}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={St.itemTitle}>{e.title}</div>
+                  <div style={St.itemMeta}>{e.type}{e.notes?` · ${e.notes}`:""}</div>
+                </div>
+                <button style={St.iconBtn} onClick={()=>delEvent(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* ── MAP ── */}
+      <div style={{...St.listHead,marginTop:events.length?20:0}}>
+        <h2 style={St.h2}>Map</h2>
         <div style={{display:"flex",gap:8}}>
           <button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Drop pin</button>
-          <button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Trail</button>
+          <button style={St.smallBtn} onClick={()=>setOpenTrail(true)}><Ic.plus style={ic(14)}/> Trail</button>
         </div>
       </div>
-
-      <div ref={ref} style={St.mapBig}/>
-      {(trip.campLat&&trip.campLng) &&
-        <a style={{...St.dirBtn,marginTop:10,width:"100%",justifyContent:"center"}}
+      <div ref={ref} style={{...St.mapBig,marginBottom:10}}/>
+      {(trip.campLat&&trip.campLng)&&
+        <a style={{...St.dirBtn,marginBottom:14,width:"100%",justifyContent:"center"}}
           href={directionsURL(trip.campLat,trip.campLng,trip.campLabel||trip.name)} target="_blank" rel="noreferrer">
           <Ic.nav style={ic(15)}/> Directions to campsite
         </a>}
-
-      <h3 style={{...St.h2,fontSize:16,marginTop:20}}>Trails & waypoints</h3>
-      {trails.length===0 && <Empty icon={Ic.foot} text="Drop a pin or add a trail to map your routes."/>}
-      <div style={{display:"grid",gap:10}}>
+      {trails.length===0&&<Empty icon={Ic.foot} text="Drop a pin or add a trail to map your routes."/>}
+      <div style={{display:"grid",gap:10,marginBottom:24}}>
         {trails.map(t=>(
           <div key={t.id} style={St.itemRow}>
             <button style={{...St.checkBtn,...(t.done?St.checkOn:{})}} onClick={()=>toggleTrail(t.id)} aria-label="Done">
-              {t.done && <Ic.check style={{width:13,height:13,color:"var(--night)"}}/>}
+              {t.done&&<Ic.check style={{width:13,height:13,color:"var(--night)"}}/>}
             </button>
             <div style={{flex:1}}>
               <div style={{...St.itemTitle,textDecoration:t.done?"line-through":"none",opacity:t.done?.6:1}}>{t.name}</div>
               <div style={St.itemMeta}>{(+t.miles||0).toFixed(1)} mi · {t.difficulty||"—"}{t.lat?` · ${(+t.lat).toFixed(4)}, ${(+t.lng).toFixed(4)}`:""}</div>
             </div>
-            {t.lat&&t.lng &&
+            {t.lat&&t.lng&&
               <a style={St.navBtn} href={directionsURL(t.lat,t.lng,t.name)} target="_blank" rel="noreferrer" aria-label="Directions"><Ic.nav style={ic(14)}/></a>}
             <button style={St.iconBtn} onClick={()=>delTrail(t.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
           </div>
         ))}
       </div>
 
-      {open && <FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpen(false);setPreset(null);}} onSave={addTrail}
+      {/* ── PHOTOS ── */}
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Photos</h2>
+        <label style={{...St.smallBtn,cursor:"pointer"}}>
+          <Ic.img style={ic(14)}/> Add
+          <input type="file" accept="image/*" multiple style={{display:"none"}}
+            onChange={e=>{addPhotos(e.target.files);e.target.value="";}}/>
+        </label>
+      </div>
+      {photos.length===0&&<Empty icon={Ic.img} text="Add photos from the trip to share with your crew."/>}
+      {photos.length>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5,marginBottom:16}}>
+          {[...photos].reverse().map(p=>(
+            <div key={p.id} style={{paddingBottom:"100%",position:"relative",borderRadius:10,overflow:"hidden",cursor:"pointer"}}
+              onClick={()=>setViewPhoto(p)}>
+              <img src={p.data} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* modals */}
+      {addEvt&&<FormSheet title="Add event" onClose={()=>setAddEvt(false)} onSave={addEvent}
+        fields={[
+          {k:"title",label:"Event",type:"text",req:true},
+          {k:"day",label:"Day",type:"select",opts:tripDays,def:tripDays[0]?.v||""},
+          {k:"time",label:"Time (e.g. 09:00)",type:"text"},
+          {k:"type",label:"Type",type:"select",opts:eventTypes.map(t=>({v:t,l:t})),def:"Activity"},
+          {k:"notes",label:"Notes (optional)",type:"text"},
+        ]}/>}
+      {openTrail&&<FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpenTrail(false);setPreset(null);}} onSave={addTrail}
         initial={preset||{}}
         fields={[
           {k:"name",label:"Trail name",type:"text",req:true},
@@ -1378,9 +1407,22 @@ function MapTab({trip,patch,flash}){
           {k:"lat",label:"Latitude",type:"text"},
           {k:"lng",label:"Longitude",type:"text"},
         ]}/>}
-      {pick && <PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Drop a waypoint"
+      {pick&&<PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Drop a waypoint"
         onClose={()=>setPick(false)}
-        onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setOpen(true);}}/>}
+        onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setOpenTrail(true);}}/>}
+      {viewPhoto&&(
+        <div style={St.overlay} onClick={()=>setViewPhoto(null)}>
+          <div style={{position:"relative",maxWidth:500,width:"100%",padding:"0 4px"}} onClick={e=>e.stopPropagation()}>
+            <img src={viewPhoto.data} alt="" style={{width:"100%",borderRadius:14,display:"block"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 2px 0"}}>
+              <span style={{fontSize:12,color:"var(--sage)"}}>by {getName(viewPhoto.by)}</span>
+              <button style={St.dangerBtn} onClick={()=>delPhoto(viewPhoto.id)}><Ic.trash style={ic(14)}/> Remove</button>
+            </div>
+            <button style={{position:"absolute",top:8,right:12,background:"rgba(0,0,0,.6)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer"}}
+              onClick={()=>setViewPhoto(null)}><Ic.x style={{...ic(18),color:"var(--paper)"}}/></button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
