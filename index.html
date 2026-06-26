@@ -1116,6 +1116,12 @@ function CampsiteCard({trip,patch,flash}){
 function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
   const members=trip.members||[]; const meals=trip.meals||[];
 
+  const sortedMembers=useMemo(()=>[...members].sort((a,b)=>{
+    if(a.id===trip.ownerId) return -1;
+    if(b.id===trip.ownerId) return 1;
+    return a.name.localeCompare(b.name);
+  }),[members,trip.ownerId]);
+
   // cost tally
   const tally=useMemo(()=>{
     const paid={},owes={}; members.forEach(m=>{paid[m.id]=0;owes[m.id]=0;});
@@ -1166,11 +1172,12 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
       )}
 
       <div style={{display:"grid",gap:14}}>
-        {members.map(m=>{
+        {sortedMembers.map(m=>{
           const t=tally[m.id]||{paid:0,share:0,net:0};
           const cooks=cookingFor(m.id);
           const brings=bringing(m.id);
           const isSelf=m.id===me.id;
+          const isOwner=m.id===trip.ownerId;
           return (
             <div key={m.id} style={St.memberCard}>
               <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -1178,7 +1185,7 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
                   ? <img src={m.photo||fetchedPhotos[m.id]} alt="" style={St.memberAvatarImg}/>
                   : <div style={St.avatar}>{m.name.slice(0,1).toUpperCase()}</div>}
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={St.itemTitle}>{m.name}{isSelf && <span style={St.youTag}>you</span>}</div>
+                  <div style={St.itemTitle}>{m.name}{isOwner && <span style={St.ownerBadge}>Owner</span>}{isSelf && <span style={St.youTag}>you</span>}</div>
                   {trip.duesEnabled && <div style={{...St.netPill,marginTop:4,display:"inline-flex",
                     background:t.net>=0?"rgba(127,169,155,.15)":"rgba(232,104,44,.15)",
                     color:t.net>=0?"var(--sage)":"var(--ember2)"}}>
@@ -2487,6 +2494,7 @@ const St={
   memberMeta:{fontSize:12,color:"var(--sage)",margin:"8px 0 2px"},
   memberRow:{display:"flex",alignItems:"center",gap:8,marginTop:8,fontSize:13},
   youTag:{fontSize:10,background:"var(--moss)",color:"var(--sage)",padding:"1px 6px",borderRadius:6,marginLeft:6,fontWeight:600,verticalAlign:"middle"},
+  ownerBadge:{fontSize:10,background:"rgba(232,178,60,.18)",color:"var(--gold)",padding:"1px 6px",borderRadius:6,marginLeft:6,fontWeight:600,verticalAlign:"middle"},
   inlineInput:{flex:1,background:"var(--night)",border:"1px solid var(--line)",borderRadius:8,color:"var(--paper)",padding:"7px 10px",fontSize:13},
   uploadChip:{display:"inline-flex",alignItems:"center",gap:4,background:"var(--moss)",color:"var(--paper)",borderRadius:8,padding:"5px 10px",fontSize:12,fontWeight:600,cursor:"pointer"},
   photoStrip:{display:"flex",gap:8,overflowX:"auto",marginTop:8,paddingBottom:4},
