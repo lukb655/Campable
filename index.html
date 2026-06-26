@@ -1131,6 +1131,11 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
     return map;
   },[trip]);
 
+  const expPerPerson=useMemo(()=>{
+    const expenses=trip.expenses||[]; const n=members.length||1;
+    return expenses.reduce((a,e)=>a+(+e.amount||0),0)/n;
+  },[trip.expenses,members.length]);
+
   const [fetchedPhotos,setFetchedPhotos]=useState({});
   useEffect(()=>{
     members.filter(m=>!m.photo).forEach(m=>{
@@ -1168,6 +1173,33 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
           <input style={St.input} placeholder="Add someone by name" value={addName}
             onChange={e=>setAddName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMember()}/>
           <button style={St.smallBtn} onClick={addMember}><Ic.plus style={ic(15)}/></button>
+        </div>
+      )}
+
+      {trip.duesEnabled && members.length>0 && (
+        <div style={{...St.block,marginBottom:16}}>
+          <div style={St.blockHead}><span>Dues &amp; Settled Up</span><Ic.dollar style={{...ic(13),color:"var(--sage)"}}/></div>
+          {expPerPerson>0 && <div style={{fontSize:12,color:"var(--sage)",marginBottom:10}}>${expPerPerson.toFixed(2)} per person from shared expenses</div>}
+          <div style={{display:"grid",gap:8}}>
+            {sortedMembers.map(m=>(
+              <div key={m.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                padding:"9px 12px",background:"var(--night)",borderRadius:10}}>
+                <div style={{fontSize:13.5,fontWeight:600}}>{m.name}{m.id===me.id?" (you)":""}</div>
+                {m.duesPaid
+                  ?<span style={{display:"flex",alignItems:"center",gap:5,color:"#5BBF8A",fontSize:13,fontWeight:600}}><Ic.checkCircle style={ic(14)}/> Settled</span>
+                  :m.duesPending
+                    ?<span style={{color:"var(--gold)",fontSize:12.5,fontWeight:500}}>⏳ Pending</span>
+                    :<span style={{color:"var(--ember2)",fontSize:13,fontWeight:600}}>{expPerPerson>0?`$${expPerPerson.toFixed(2)} owed`:"Not settled"}</span>}
+              </div>
+            ))}
+          </div>
+          {members.every(m=>m.duesPaid) && (
+            <div style={{marginTop:10,padding:"8px 12px",background:"rgba(91,191,138,.1)",
+              border:"1px solid rgba(91,191,138,.25)",borderRadius:10,
+              fontSize:12.5,color:"#5BBF8A",display:"flex",alignItems:"center",gap:6}}>
+              <Ic.checkCircle style={ic(14)}/> All crew settled up
+            </div>
+          )}
         </div>
       )}
 
