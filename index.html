@@ -393,9 +393,10 @@ function App(){
       <main style={{...St.main, ...(route.name==="trip"?{padding:"0 0 0",maxWidth:"none"}:{})}}>
         {route.name==="trips" &&
           <Home trips={trips} me={me} flash={flash}
-            onOpen={id=>setRoute({name:"trip",id})}/>}
+            onOpen={id=>setRoute({name:"trip",id})}
+            onOpenSettings={id=>setRoute({name:"trip",id,tab:"settings"})}/>}
         {route.name==="trip" && current &&
-          <TripShell trip={current} me={me} flash={flash} onBack={()=>setRoute({name:"trips"})}/>}
+          <TripShell trip={current} me={me} flash={flash} onBack={()=>setRoute({name:"trips"})} initialTab={route.tab||"plan"}/>}
         {route.name==="trip" && !current &&
           <div style={{...St.main}}><Empty icon={Ic.mtn} text="This trip is no longer available."/>
             <button style={St.primaryBtn} onClick={()=>setRoute({name:"trips"})}>Back to trips</button></div>}
@@ -525,7 +526,7 @@ function Splash(){
 /* ============================================================
    HOME — trip list + all-trips map
    ============================================================ */
-function Home({trips,me,flash,onOpen}){
+function Home({trips,me,flash,onOpen,onOpenSettings}){
   const [adding,setAdding]=useState(false);
   const [joining,setJoining]=useState(false);
 
@@ -569,7 +570,7 @@ function Home({trips,me,flash,onOpen}){
         <div key={year} style={{marginBottom:26}}>
           <div style={St.yearLabel}><span style={St.yearNum}>{year}</span><span style={St.yearLine}/></div>
           <div style={St.tripGrid}>
-            {grouped[year].map(t=><TripCard key={t.id} trip={t} onOpen={()=>onOpen(t.id)}/>)}
+            {grouped[year].map(t=><TripCard key={t.id} trip={t} me={me} onOpen={()=>onOpen(t.id)} onSettings={()=>onOpenSettings(t.id)}/>)}
           </div>
         </div>
       ))}
@@ -633,7 +634,11 @@ function AllTripsMap({trips,onOpen}){
   );
 }
 
-function TripCard({trip,onOpen}){
+function TripCard({trip,me,onOpen,onSettings}){
+  const isCreator=me && trip.ownerId===me.id;
+  const creatorName=!isCreator
+    ? ((trip.members||[]).find(m=>m.id===trip.ownerId)?.name||"")
+    : "";
   const miles=(trip.trails||[]).reduce((a,t)=>a+(+t.miles||0),0);
   const dateLabel=trip.start?new Date(trip.start+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}):"TBD";
   return (
@@ -642,9 +647,27 @@ function TripCard({trip,onOpen}){
         {!trip.cover && <Ic.tent style={{width:30,height:30,color:"var(--mist)",opacity:.7}}/>}
         <div style={St.coverGrad}/>
         <div style={St.cardDate}>{dateLabel}</div>
+        {isCreator
+          ? <div
+              role="button" tabIndex={0}
+              title="Trip settings"
+              onClick={e=>{e.stopPropagation();onSettings&&onSettings();}}
+              onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.stopPropagation();onSettings&&onSettings();}}}
+              style={{position:"absolute",top:10,right:10,background:"rgba(15,26,23,.82)",
+                color:"var(--sage)",borderRadius:8,padding:"4px 7px",cursor:"pointer",
+                display:"flex",alignItems:"center",lineHeight:1}}>
+              <Ic.gear style={ic(13)}/>
+            </div>
+          : <div style={{position:"absolute",top:10,right:10,background:"rgba(15,26,23,.82)",
+              color:"var(--ember2)",fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:8,
+              fontFamily:"'Oswald',sans-serif",letterSpacing:.5}}>
+              Joined
+            </div>}
       </div>
       <div style={St.cardBody}>
         <div style={St.cardTitle}>{trip.name}</div>
+        {!isCreator && creatorName &&
+          <div style={{fontSize:11,color:"var(--sage)",marginTop:2,marginBottom:1}}>by {creatorName}</div>}
         <div style={St.cardLoc}><Ic.pin style={ic(12)}/> {trip.location||"Location TBD"}</div>
         <div style={St.cardStats}>
           <span><Ic.foot style={ic(12)}/> {miles.toFixed(1)}mi</span>
@@ -660,8 +683,8 @@ function TripCard({trip,onOpen}){
 /* ============================================================
    TRIP SHELL — sticky header + bottom tab bar
    ============================================================ */
-function TripShell({trip,me,flash,onBack}){
-  const [tab,setTab]=useState("plan");
+function TripShell({trip,me,flash,onBack,initialTab}){
+  const [tab,setTab]=useState(initialTab||"plan");
   const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
   const isAdmin=trip.ownerId===me.id;
   const tabs=[
