@@ -1,0 +1,24 @@
+:root{
+  --night:#0F1A17; --pine:#162A24; --moss:#1F3B32; --mist:#2C5247;
+  --sage:#7FA99B; --paper:#E9EDE9; --ember:#E8682C; --ember2:#F2944E;
+  --gold:#E8B23C; --line:rgba(127,169,155,0.18); --danger:#D9534F;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--night);color:var(--paper);
+  font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;overscroll-behavior-y:none}
+button,input,select,textarea{font-family:inherit}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--ember);outline-offset:1px}
+button:focus-visible,a:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+select option{background:var(--pine);color:var(--paper)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--moss);border-radius:4px}
+a{color:inherit}
+.leaflet-container{background:var(--moss);border-radius:12px;font-family:inherit}
+.leaflet-popup-content-wrapper{background:var(--pine);color:var(--paper);border-radius:10px}
+.leaflet-popup-tip{background:var(--pine)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+#root{min-height:100vh;min-height:100dvh}
+.spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.fade{animation:fade .35s ease}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.center-popup{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%) scaleY(0);transform-origin:bottom center;opacity:0;transition:transform .22s cubic-bezier(.34,1.56,.64,1),opacity .18s ease;pointer-events:none;z-index:60;display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:170px}
+.center-popup.open{transform:translateX(-50%) scaleY(1);opacity:1;pointer-events:auto}
