@@ -213,7 +213,7 @@ const Data = {
       .onSnapshot(s=>cb(s.docs.map(d=>({id:d.id,...d.data()}))), e=>console.error(e));
   },
   async createTrip(t){
-    const full={...t, code:code6(), createdAt:Date.now()};
+    const full={...t, joinCode:code6(), createdAt:Date.now()};
     if(!HAS_FB){ const all=lread(LK.trips,{}); full.id=uid(); all[full.id]=full; lwrite(LK.trips,all); localPing(); return full; }
     const ref=await db.collection("trips").add(full); return {id:ref.id,...full};
   },
@@ -283,12 +283,12 @@ const Data = {
   async joinByCode(me, codeInput){
     const code=codeInput.trim().toUpperCase();
     if(!HAS_FB){
-      const all=lread(LK.trips,{}); const t=Object.values(all).find(x=>x.code===code); if(!t)return null;
+      const all=lread(LK.trips,{}); const t=Object.values(all).find(x=>x.joinCode===code); if(!t)return null;
       t.members=t.members||[]; t.memberIds=t.memberIds||[];
       if(!t.memberIds.includes(me.id)){t.members.push(blankMember(me));t.memberIds.push(me.id);}
       all[t.id]=t; lwrite(LK.trips,all); localPing(); return t;
     }
-    const q=await db.collection("trips").where("code","==",code).limit(1).get();
+    const q=await db.collection("trips").where("joinCode","==",code).limit(1).get();
     if(q.empty)return null;
     const doc=q.docs[0], t=doc.data();
     const members=t.members||[], memberIds=t.memberIds||[];
@@ -1155,7 +1155,7 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
 
   return (
     <div style={St.pane}>
-      {(isAdmin||trip.allowCrewShareCode) && <ShareCard trip={trip} flash={flash}/>}
+      {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
 
       {isAdmin && !readOnly && (
         <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
@@ -1505,9 +1505,9 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
     patch({name:name.trim(),location:loc.trim(),start,end}); flash("Trip details saved");
   };
 
-  const copyCode=async()=>{try{await navigator.clipboard.writeText(trip.code);flash("Code copied");}catch{flash(trip.code);}};
-  const shareCode=async()=>{
-    const text=`Join "${trip.name}" on Campable. Tap Join and enter code: ${trip.code}`;
+  const copyCode=async()=>{try{await navigator.clipboard.writeText(trip.joinCode);flash("Code copied");}catch{flash(trip.joinCode);}};
+  const shareCodeNative=async()=>{
+    const text=`Join "${trip.name}" on Campable. Tap Join and enter code: ${trip.joinCode}`;
     if(navigator.share){try{await navigator.share({title:"Campable",text});return;}catch{}}
     copyCode();
   };
@@ -1545,12 +1545,12 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
           <div>
             <div style={St.shareLabel}>Crew invite code</div>
-            <div style={St.shareCode}>{trip.code}</div>
+            <div style={St.shareCode}>{trip.joinCode}</div>
             <div style={St.hintSm}>Share this with people you want to join the trip.</div>
           </div>
           <div style={{display:"flex",gap:8}}>
             <button style={St.iconChip} onClick={copyCode} aria-label="Copy"><Ic.copy style={ic(16)}/></button>
-            <button style={St.iconChip} onClick={shareCode} aria-label="Share"><Ic.share style={ic(16)}/></button>
+            <button style={St.iconChip} onClick={shareCodeNative} aria-label="Share"><Ic.share style={ic(16)}/></button>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--night)",borderRadius:10,padding:"10px 12px"}}>
@@ -1558,10 +1558,10 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
             <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>Let crew share code</div>
             <div style={St.hintSm}>Show the invite code to all members in the Crew tab.</div>
           </div>
-          <button style={{...St.toggle,...(trip.allowCrewShareCode?St.toggleOn:{})}}
-            onClick={()=>patch({allowCrewShareCode:!trip.allowCrewShareCode})}>
-            <span style={{...St.toggleKnob,...(trip.allowCrewShareCode?St.toggleKnobOn:{})}}/>
-            {trip.allowCrewShareCode?"On":"Off"}
+          <button style={{...St.toggle,...(trip.shareCode?St.toggleOn:{})}}
+            onClick={()=>patch({shareCode:!trip.shareCode})}>
+            <span style={{...St.toggleKnob,...(trip.shareCode?St.toggleKnobOn:{})}}/>
+            {trip.shareCode?"On":"Off"}
           </button>
         </div>
       </div>
@@ -2149,23 +2149,29 @@ function ImagePicker({label,current,onPicked,onClear,flash}){
   );
 }
 
-function ShareCard({trip,flash}){
-  const copy=async()=>{try{await navigator.clipboard.writeText(trip.code);flash("Code copied");}catch{flash(trip.code);}};
-  const share=async()=>{
-    const text=`Join "${trip.name}" on Campable. Open the app, tap Join, and enter code: ${trip.code}`;
-    if(navigator.share){try{await navigator.share({title:"Campable",text});}catch{}}else copy();
-  };
+function ShareCard({trip,flash,isAdmin,patch}){
+  const joinCode=trip.joinCode;
+  const copy=async()=>{try{await navigator.clipboard.writeText(joinCode);flash("Code copied");}catch{flash(joinCode);}};
   return (
-    <div style={St.shareCard}>
-      <div>
-        <div style={St.shareLabel}>Crew invite code</div>
-        <div style={St.shareCode}>{trip.code}</div>
-        <div style={St.hintSm}>Friends tap "Join" and type this in.</div>
+    <div style={{...St.shareCard,flexDirection:"column",alignItems:"stretch"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={St.shareLabel}>Invite code</div>
+          <div style={St.shareCode}>{joinCode}</div>
+          <div style={St.hintSm}>Friends tap "Join" and type this in.</div>
+        </div>
+        <button style={St.smallBtn} onClick={copy}>Copy Code</button>
       </div>
-      <div style={{display:"flex",gap:8}}>
-        <button style={St.iconChip} onClick={copy} aria-label="Copy"><Ic.copy style={ic(16)}/></button>
-        <button style={St.iconChip} onClick={share} aria-label="Share"><Ic.share style={ic(16)}/></button>
-      </div>
+      {isAdmin && (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid rgba(255,255,255,.1)",marginTop:10,paddingTop:10}}>
+          <span style={{fontSize:12,color:"var(--sage)"}}>Show code to crew</span>
+          <button style={{...St.toggle,...(trip.shareCode?St.toggleOn:{})}}
+            onClick={()=>patch({shareCode:!trip.shareCode})}>
+            <span style={{...St.toggleKnob,...(trip.shareCode?St.toggleKnobOn:{})}}/>
+            {trip.shareCode?"On":"Off"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
