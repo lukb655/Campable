@@ -1009,11 +1009,16 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
 
   const leaveTrip=async()=>{
     if(!confirm("Leave this trip?"))return;
-    // Remove self from members
     const members=(trip.members||[]).filter(m=>m.id!==me.id);
     const memberIds=(trip.memberIds||[]).filter(id=>id!==me.id);
     await Data.updateTrip(trip.id,{members,memberIds});
     flash("Left trip"); onBack();
+  };
+
+  const completeTrip=async()=>{
+    if(!confirm("Mark this trip as completed? It will move to the archive."))return;
+    await Data.updateTrip(trip.id,{status:"completed",completedAt:new Date().toISOString()});
+    flash("Trip completed"); onBack();
   };
 
   return (
@@ -1058,10 +1063,18 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
             </>}
       </div>
 
-      {!isAdmin && !readOnly &&
-        <button style={St.dangerBtn} onClick={leaveTrip}>
-          <Ic.logout style={ic(15)}/> Leave trip
-        </button>}
+      {!readOnly && (
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {!isAdmin &&
+            <button style={St.ghostBtn} onClick={leaveTrip}>
+              <Ic.logout style={ic(15)}/> Leave trip
+            </button>}
+          {isAdmin &&
+            <button style={St.primaryBtn} onClick={completeTrip}>
+              <Ic.checkCircle style={ic(15)}/> Complete trip
+            </button>}
+        </div>
+      )}
     </div>
   );
 }
