@@ -267,17 +267,28 @@ const blankMember=(me)=>({id:me.id,name:me.name,email:me.email||"",emergency:"",
 /* ---------- image handling: compress to fast, small data URL ---------- */
 function fileToCompressedDataURL(file, maxDim=1200, quality=0.72){
   return new Promise((resolve,reject)=>{
+    if(file.size > 15*1024*1024){
+      return reject(new Error("That photo is over 15 MB — please resize or compress it first."));
+    }
+    const mime=(file.type||"").toLowerCase();
+    const ext=(file.name||"").toLowerCase().split(".").pop();
+    if(mime==="image/heic"||mime==="image/heif"||ext==="heic"||ext==="heif"){
+      return reject(new Error("HEIC photos aren't supported by the browser. In the Photos app tap Share → Save to Files and choose JPEG, then try again."));
+    }
     const reader=new FileReader();
     reader.onerror=()=>reject(new Error("Couldn't read that file."));
     reader.onload=()=>{
       const img=new Image();
-      img.onerror=()=>reject(new Error("That file isn't a valid image."));
+      img.onerror=()=>reject(new Error("That file isn't a valid image. Try saving it as a JPEG, PNG, or WEBP first."));
       img.onload=()=>{
         let{width:w,height:h}=img;
         if(w>h && w>maxDim){h=Math.round(h*maxDim/w);w=maxDim;}
         else if(h>=w && h>maxDim){w=Math.round(w*maxDim/h);h=maxDim;}
         const c=document.createElement("canvas");c.width=w;c.height=h;
-        c.getContext("2d").drawImage(img,0,0,w,h);
+        const ctx=c.getContext("2d");
+        ctx.fillStyle="#ffffff";
+        ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img,0,0,w,h);
         resolve(c.toDataURL("image/jpeg",quality));
       };
       img.src=reader.result;
@@ -1788,7 +1799,7 @@ function ImagePicker({label,current,onPicked,onClear,flash}){
         <input type="file" accept="image/*" style={{display:"none"}} disabled={busy}
           onChange={e=>{handle(e.target.files[0]);e.target.value="";}}/>
       </label>
-      <div style={St.hintSm}>Pick from your camera roll or take a new one. Photos are shrunk automatically so they upload fast.</div>
+      <div style={St.hintSm}>JPG, PNG, WEBP, or GIF · max 15 MB. Photos are resized automatically. HEIC (iPhone default) must be exported as JPEG first.</div>
     </div>
   );
 }
