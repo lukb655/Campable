@@ -10,7 +10,7 @@ export function seedFor(me){
   if(Object.values(all).some(t=>(t.memberIds||[]).includes(me.id))) return;
   const id=uid();
   all[id]={
-    id, ownerId:me.id, code:code6(), createdAt:Date.now(),
+    id, ownerId:me.id, joinCode:code6(), createdAt:Date.now(),
     name:"Dolly Sods Overlander", location:"Dolly Sods Wilderness, WV",
     start:"2026-09-18", end:"2026-09-21", cover:"",
     campLat:39.0476, campLng:-79.3074, campLabel:"Bear Rocks dispersed site",

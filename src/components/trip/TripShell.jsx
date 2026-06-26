@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Data } from '../../data.js';
 import { Ic } from '../../icons.jsx';
 import { St } from '../../styles.js';
-import { ic, fmt } from '../../utils.js';
+import { ic, fmt, code6 } from '../../utils.js';
 import OverviewTab from './OverviewTab.jsx';
 import CrewTab from './CrewTab.jsx';
 import MealsTab from './MealsTab.jsx';
@@ -17,6 +17,10 @@ export default function TripShell({trip,me,flash,onBack,initialTab}){
   const [menuOpen,setMenuOpen]=useState(false);
   const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
   const isAdmin=trip.ownerId===me.id;
+
+  useEffect(()=>{
+    if(!trip.joinCode) patch({joinCode: trip.code || code6()});
+  },[trip.id]);
   const isCompleted=trip.status==="completed";
   const centerItems=[
     {id:"meals",label:"Meals",icon:Ic.food},
