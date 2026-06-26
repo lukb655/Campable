@@ -364,6 +364,8 @@ const Ic={
   logout:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>,
   sos:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7v6c0 5 3.8 8.5 10 11 6.2-2.5 10-6 10-11V7L12 2z"/><path d="M12 8v4M12 16h.01"/></svg>,
   gear:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  checkCircle:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>,
+  archive:(p)=><svg {...p} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg>,
 };
 const ic=(n)=>({width:n,height:n,flexShrink:0});
 const fmt=(d)=>d?new Date(d+"T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"TBD";
@@ -540,10 +542,18 @@ function Splash(){
 function Home({trips,me,flash,onOpen,onOpenSettings}){
   const [adding,setAdding]=useState(false);
   const [joining,setJoining]=useState(false);
+  const [archiveOpen,setArchiveOpen]=useState(false);
+
+  const activeTrips=useMemo(()=>trips.filter(t=>t.status!=="completed"),[trips]);
+  const archivedTrips=useMemo(()=>trips.filter(t=>t.status==="completed"),[trips]);
 
   const grouped=useMemo(()=>{
-    const g={}; trips.forEach(t=>{const y=t.start?t.start.slice(0,4):"Unscheduled";(g[y]=g[y]||[]).push(t);}); return g;
-  },[trips]);
+    const g={}; activeTrips.forEach(t=>{const y=t.start?t.start.slice(0,4):"Unscheduled";(g[y]=g[y]||[]).push(t);}); return g;
+  },[activeTrips]);
+
+  const archivedGrouped=useMemo(()=>{
+    const g={}; archivedTrips.forEach(t=>{const y=t.start?t.start.slice(0,4):"Unscheduled";(g[y]=g[y]||[]).push(t);}); return g;
+  },[archivedTrips]);
 
   const addTrip=async(d)=>{
     await Data.createTrip({
@@ -564,7 +574,7 @@ function Home({trips,me,flash,onOpen,onOpenSettings}){
       <div style={St.sectionHead}>
         <div>
           <h1 style={St.h1}>Your Trips</h1>
-          <p style={St.sub}>{trips.length} {trips.length===1?"trip":"trips"} planned</p>
+          <p style={St.sub}>{activeTrips.length} active {activeTrips.length===1?"trip":"trips"}{archivedTrips.length>0?` · ${archivedTrips.length} completed`:""}</p>
         </div>
         <div style={{display:"flex",gap:8}}>
           <button style={St.ghostBtn} onClick={()=>setJoining(true)}>Join</button>
@@ -572,10 +582,13 @@ function Home({trips,me,flash,onOpen,onOpenSettings}){
         </div>
       </div>
 
-      <AllTripsMap trips={trips} onOpen={onOpen}/>
+      <AllTripsMap trips={activeTrips} onOpen={onOpen}/>
 
-      {trips.length===0 &&
+      {activeTrips.length===0 && archivedTrips.length===0 &&
         <Empty icon={Ic.pack} text="No trips yet. Plan one and share its code, or join a friend's with theirs."/>}
+
+      {activeTrips.length===0 && archivedTrips.length>0 &&
+        <Empty icon={Ic.pack} text="No active trips. All your trips are in the archive below."/>}
 
       {Object.keys(grouped).sort().map(year=>(
         <div key={year} style={{marginBottom:26}}>
@@ -585,6 +598,41 @@ function Home({trips,me,flash,onOpen,onOpenSettings}){
           </div>
         </div>
       ))}
+
+      {archivedTrips.length>0&&(
+        <div style={{marginBottom:26}}>
+          <button
+            onClick={()=>setArchiveOpen(o=>!o)}
+            style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+              width:"100%",background:"var(--pine)",border:"1px solid var(--line)",borderRadius:14,
+              color:"var(--paper)",padding:"12px 14px",cursor:"pointer",gap:8,marginBottom:archiveOpen?14:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <Ic.archive style={{...ic(15),color:"var(--sage)"}}/>
+              <span style={{fontFamily:"'Oswald',sans-serif",fontWeight:600,fontSize:14,letterSpacing:.5}}>
+                Archive
+              </span>
+              <span style={{fontSize:11,background:"var(--moss)",color:"var(--sage)",
+                padding:"2px 8px",borderRadius:6,fontWeight:600}}>
+                {archivedTrips.length}
+              </span>
+            </div>
+            <Ic.chev style={{...ic(16),color:"var(--sage)",
+              transform:archiveOpen?"rotate(90deg)":"none",transition:"transform .2s"}}/>
+          </button>
+          {archiveOpen&&(
+            <div>
+              {Object.keys(archivedGrouped).sort().reverse().map(year=>(
+                <div key={year} style={{marginBottom:18}}>
+                  <div style={St.yearLabel}><span style={St.yearNum}>{year}</span><span style={St.yearLine}/></div>
+                  <div style={St.tripGrid}>
+                    {archivedGrouped[year].map(t=><TripCard key={t.id} trip={t} me={me} onOpen={()=>onOpen(t.id)} onSettings={()=>onOpenSettings(t.id)}/>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {adding && <TripForm onSave={addTrip} onClose={()=>setAdding(false)}/>}
       {joining && <JoinForm onJoin={join} onClose={()=>setJoining(false)}/>}
@@ -676,7 +724,15 @@ function TripCard({trip,me,onOpen,onSettings}){
             </div>}
       </div>
       <div style={St.cardBody}>
-        <div style={St.cardTitle}>{trip.name}</div>
+        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+          <div style={St.cardTitle}>{trip.name}</div>
+          {trip.status==="completed" &&
+            <div style={{display:"inline-flex",alignItems:"center",gap:3,background:"rgba(91,191,138,.18)",
+              color:"#5BBF8A",fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:7,
+              fontFamily:"'Oswald',sans-serif",letterSpacing:.4,border:"1px solid rgba(91,191,138,.3)",flexShrink:0}}>
+              <Ic.checkCircle style={ic(10)}/> Done
+            </div>}
+        </div>
         {!isCreator && creatorName &&
           <div style={{fontSize:11,color:"var(--sage)",marginTop:2,marginBottom:1}}>by {creatorName}</div>}
         <div style={St.cardLoc}><Ic.pin style={ic(12)}/> {trip.location||"Location TBD"}</div>
@@ -698,6 +754,7 @@ function TripShell({trip,me,flash,onBack,initialTab}){
   const [tab,setTab]=useState(initialTab||"plan");
   const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
   const isAdmin=trip.ownerId===me.id;
+  const isCompleted=trip.status==="completed";
   const tabs=[
     {id:"plan",label:"Overview",icon:Ic.pack},
     {id:"crew",label:"Crew",icon:Ic.users},
@@ -717,14 +774,31 @@ function TripShell({trip,me,flash,onBack,initialTab}){
             <h1 style={St.heroTitle}>{trip.name}</h1>
             <div style={St.heroLoc}><Ic.pin style={ic(14)}/> {trip.location||"Set a location"}</div>
           </div>
+          {isCompleted&&(
+            <div style={{position:"absolute",top:12,right:12,background:"rgba(91,191,138,.22)",
+              color:"#5BBF8A",fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:9,
+              fontFamily:"'Oswald',sans-serif",letterSpacing:.5,display:"flex",alignItems:"center",gap:5,
+              border:"1px solid rgba(91,191,138,.4)"}}>
+              <Ic.checkCircle style={ic(12)}/> Completed
+            </div>
+          )}
         </div>
 
+        {isCompleted&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",
+            background:"rgba(91,191,138,.07)",border:"1px solid rgba(91,191,138,.2)",
+            borderRadius:12,marginBottom:14,fontSize:13,color:"#5BBF8A"}}>
+            <Ic.archive style={{...ic(15),flexShrink:0}}/>
+            <span>This trip is archived and <strong>read-only</strong>.{trip.completedAt?` Completed ${fmt(trip.completedAt)}.`:""}{isAdmin?" Restore it in Settings to make changes.":""}</span>
+          </div>
+        )}
+
         <div style={St.tripBody}>
-          {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin}/>}
-          {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>}
-          {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash}/>}
-          {tab==="costs" && <CostsTab trip={trip} patch={patch} flash={flash}/>}
-          {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash}/>}
+          {tab==="plan" && <OverviewTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack} isAdmin={isAdmin} readOnly={isCompleted}/>}
+          {tab==="crew" && <CrewTab trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin} readOnly={isCompleted}/>}
+          {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
+          {tab==="costs" && <CostsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
+          {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="settings" && isAdmin && <TripSettingsTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
         </div>
       </div>
@@ -743,7 +817,7 @@ function TripShell({trip,me,flash,onBack,initialTab}){
 }
 
 /* ---------------- OVERVIEW ---------------- */
-function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
+function OverviewTab({trip,me,patch,flash,onBack,isAdmin,readOnly}){
   const miles=(trip.trails||[]).reduce((a,t)=>a+(+t.miles||0),0);
   const cost=(trip.meals||[]).reduce((a,m)=>a+(+m.cost||0),0);
   const tasks=[
@@ -772,7 +846,7 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
         <Stat icon={Ic.users} label="Crew" value={(trip.members||[]).length}/>
       </div>
 
-      <DuesSection trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>
+      <DuesSection trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin} readOnly={readOnly}/>
 
       <div style={St.block}>
         <div style={St.blockHead}><span>Trip readiness</span><span style={{color:"var(--ember2)"}}>{pct}%</span></div>
@@ -791,12 +865,18 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
 
       <div style={St.block}>
         <div style={St.blockHead}><span>Field notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
-        <textarea style={St.notes} placeholder="Gear list, permits, dark-sky windows, bailout plan…"
-          defaultValue={trip.notes} onBlur={e=>patch({notes:e.target.value})}/>
-        <div style={St.hintSm}>Saves when you tap away.</div>
+        {readOnly
+          ? <div style={{fontSize:13.5,lineHeight:1.6,color:trip.notes?"var(--paper)":"var(--sage)",whiteSpace:"pre-wrap"}}>
+              {trip.notes||"No field notes."}
+            </div>
+          : <>
+              <textarea style={St.notes} placeholder="Gear list, permits, dark-sky windows, bailout plan…"
+                defaultValue={trip.notes} onBlur={e=>patch({notes:e.target.value})}/>
+              <div style={St.hintSm}>Saves when you tap away.</div>
+            </>}
       </div>
 
-      {!isAdmin &&
+      {!isAdmin && !readOnly &&
         <button style={St.dangerBtn} onClick={leaveTrip}>
           <Ic.logout style={ic(15)}/> Leave trip
         </button>}
@@ -838,7 +918,7 @@ function CampsiteCard({trip,patch,flash}){
 }
 
 /* ---------------- CREW (who owes + photos + items + emergency) ---------------- */
-function CrewTab({trip,me,patch,flash,isAdmin}){
+function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
   const members=trip.members||[]; const meals=trip.meals||[];
 
   // cost tally
@@ -882,7 +962,7 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
     <div style={St.pane}>
       {(isAdmin||trip.allowCrewShareCode) && <ShareCard trip={trip} flash={flash}/>}
 
-      {isAdmin && (
+      {isAdmin && !readOnly && (
         <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
           <input style={St.input} placeholder="Add someone by name" value={addName}
             onChange={e=>setAddName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMember()}/>
@@ -910,7 +990,7 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
                     {Math.abs(t.net)<0.005?"settled up":t.net>0?`gets back $${t.net.toFixed(2)}`:`owes $${Math.abs(t.net).toFixed(2)}`}
                   </div>}
                 </div>
-                {isAdmin && <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
+                {isAdmin && !readOnly && <button style={St.iconBtn} onClick={()=>delMember(m.id)} aria-label="Remove"><Ic.trash style={ic(15)}/></button>}
               </div>
 
               {trip.duesEnabled && <div style={St.memberMeta}>paid ${t.paid.toFixed(2)} · fair share ${t.share.toFixed(2)}</div>}
@@ -930,8 +1010,10 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
 
               <div style={St.memberRow}>
                 <Ic.sos style={{...ic(14),color:"var(--sage)"}}/>
-                <input style={St.inlineInput} placeholder="Emergency contact (name + phone)"
-                  defaultValue={m.emergency} onBlur={e=>updateMember(m.id,{emergency:e.target.value})}/>
+                {readOnly
+                  ? <span style={{fontSize:13,color:m.emergency?"var(--paper)":"var(--sage)"}}>{m.emergency||"No emergency contact"}</span>
+                  : <input style={St.inlineInput} placeholder="Emergency contact (name + phone)"
+                      defaultValue={m.emergency} onBlur={e=>updateMember(m.id,{emergency:e.target.value})}/>}
               </div>
 
             </div>
@@ -944,7 +1026,7 @@ function CrewTab({trip,me,patch,flash,isAdmin}){
 }
 
 /* ---------------- MEALS (with per-item shopping list) ---------------- */
-function MealsTab({trip,patch,flash}){
+function MealsTab({trip,patch,flash,readOnly}){
   const [open,setOpen]=useState(false);
   const [showList,setShowList]=useState(false);
   const meals=trip.meals||[]; const members=trip.members||[];
@@ -980,7 +1062,7 @@ function MealsTab({trip,patch,flash}){
         <h2 style={St.h2}>Meal plan</h2>
         <div style={{display:"flex",gap:8}}>
           <button style={St.smallBtn} onClick={()=>setShowList(true)}><Ic.cart style={ic(14)}/> List{toBuy?` (${toBuy})`:""}</button>
-          <button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Meal</button>
+          {!readOnly&&<button style={St.smallBtn} onClick={()=>setOpen(true)}><Ic.plus style={ic(14)}/> Meal</button>}
         </div>
       </div>
 
@@ -988,13 +1070,13 @@ function MealsTab({trip,patch,flash}){
 
       <div style={{display:"grid",gap:12}}>
         {meals.map(m=>(
-          <MealCard key={m.id} meal={m} members={members} nameOf={nameOf}
+          <MealCard key={m.id} meal={m} members={members} nameOf={nameOf} readOnly={readOnly}
             onDel={()=>delMeal(m.id)} onUpdate={f=>updateMeal(m.id,f)}
             onAddItem={(n,q)=>addItem(m.id,n,q)} onToggleItem={iid=>toggleItem(m.id,iid)} onDelItem={iid=>delItem(m.id,iid)} onUpdateItem={(iid,f)=>updateItem(m.id,iid,f)}/>
         ))}
       </div>
 
-      {open && <FormSheet title="Add meal" onClose={()=>setOpen(false)} onSave={addMeal}
+      {open && !readOnly && <FormSheet title="Add meal" onClose={()=>setOpen(false)} onSave={addMeal}
         fields={[
           {k:"title",label:"Meal",type:"text",req:true},
           {k:"day",label:"Day",type:"select",opts:days.map(d=>({v:d,l:d})),def:"Fri"},
@@ -1009,7 +1091,7 @@ function MealsTab({trip,patch,flash}){
   );
 }
 
-function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onDelItem,onUpdateItem}){
+function MealCard({meal,members,nameOf,readOnly,onDel,onUpdate,onAddItem,onToggleItem,onDelItem,onUpdateItem}){
   const [exp,setExp]=useState(false);
   const [iname,setIname]=useState(""); const [iqty,setIqty]=useState("");
   const items=meal.items||[];
@@ -1026,7 +1108,7 @@ function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onD
             {meal.responsible?` · Cook: ${nameOf(meal.responsible)}`:""}
           </div>
         </div>
-        <button style={St.iconBtn} onClick={onDel} aria-label="Delete meal"><Ic.trash style={ic(15)}/></button>
+        {!readOnly&&<button style={St.iconBtn} onClick={onDel} aria-label="Delete meal"><Ic.trash style={ic(15)}/></button>}
       </div>
 
       <button style={St.expandRow} onClick={()=>setExp(!exp)}>
@@ -1045,23 +1127,23 @@ function MealCard({meal,members,nameOf,onDel,onUpdate,onAddItem,onToggleItem,onD
               <span style={{flex:1,textDecoration:i.got?"line-through":"none",opacity:i.got?.55:1,fontSize:13.5}}>
                 {i.name}{i.qty?` · ${i.qty}`:""}
               </span>
-              {members.length>0 && onUpdateItem && (
+              {members.length>0 && onUpdateItem && !readOnly && (
                 <select style={St.itemRespSelect} value={i.responsible||""} title="Who's bringing this?"
                   onChange={e=>onUpdateItem(i.id,{responsible:e.target.value})}>
                   <option value="">—</option>
                   {members.map(m=><option key={m.id} value={m.id}>{m.name.split(" ")[0]}</option>)}
                 </select>
               )}
-              <button style={St.iconBtn} onClick={()=>onDelItem(i.id)} aria-label="Remove"><Ic.x style={ic(13)}/></button>
+              {!readOnly&&<button style={St.iconBtn} onClick={()=>onDelItem(i.id)} aria-label="Remove"><Ic.x style={ic(13)}/></button>}
             </div>
           ))}
-          <div style={{display:"flex",gap:6,marginTop:8}}>
+          {!readOnly&&<div style={{display:"flex",gap:6,marginTop:8}}>
             <input style={{...St.input,flex:2}} placeholder="Ingredient" value={iname} onChange={e=>setIname(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){onAddItem(iname,iqty);setIname("");setIqty("");}}}/>
             <input style={{...St.input,flex:1}} placeholder="Qty" value={iqty} onChange={e=>setIqty(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){onAddItem(iname,iqty);setIname("");setIqty("");}}}/>
             <button style={St.smallBtn} onClick={()=>{onAddItem(iname,iqty);setIname("");setIqty("");}}><Ic.plus style={ic(15)}/></button>
-          </div>
+          </div>}
         </div>}
     </div>
   );
@@ -1108,7 +1190,7 @@ function ShoppingList({items,members,onToggle,onClose}){
 }
 
 /* ---------------- COSTS (itemized shared expenses) ---------------- */
-function CostsTab({trip,patch,flash}){
+function CostsTab({trip,patch,flash,readOnly}){
   const expenses=trip.expenses||[];
   const members=trip.members||[];
   const n=members.length||1;
@@ -1161,7 +1243,7 @@ function CostsTab({trip,patch,flash}){
     <div style={St.pane}>
       <div style={St.listHead}>
         <h2 style={St.h2}>Shared Expenses</h2>
-        {!adding&&!editId&&<button style={St.smallBtn} onClick={openAdd}><Ic.plus style={ic(14)}/> Add</button>}
+        {!readOnly&&!adding&&!editId&&<button style={St.smallBtn} onClick={openAdd}><Ic.plus style={ic(14)}/> Add</button>}
       </div>
 
       {expenses.length>0&&(
@@ -1202,8 +1284,8 @@ function CostsTab({trip,patch,flash}){
                 <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:700,color:"var(--paper)",flexShrink:0,marginRight:4}}>
                   ${(+e.amount||0).toFixed(2)}
                 </div>
-                <button style={St.iconBtn} onClick={()=>openEdit(e)} aria-label="Edit"><Ic.edit style={ic(15)}/></button>
-                <button style={St.iconBtn} onClick={()=>del(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+                {!readOnly&&<button style={St.iconBtn} onClick={()=>openEdit(e)} aria-label="Edit"><Ic.edit style={ic(15)}/></button>}
+                {!readOnly&&<button style={St.iconBtn} onClick={()=>del(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
               </div>
             )
         ))}
@@ -1347,6 +1429,31 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
         </>}
       </div>
 
+      {/* Trip Status */}
+      <div style={St.block}>
+        <div style={St.blockHead}><span>Trip Status</span><Ic.checkCircle style={{...ic(13),color:"var(--sage)"}}/></div>
+        {trip.status==="completed"
+          ? <>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",
+                background:"rgba(91,191,138,.1)",border:"1px solid rgba(91,191,138,.25)",
+                borderRadius:10,marginBottom:14}}>
+                <Ic.checkCircle style={{...ic(16),color:"#5BBF8A",flexShrink:0}}/>
+                <div>
+                  <div style={{fontSize:13.5,fontWeight:600,color:"#5BBF8A"}}>Trip completed</div>
+                  {trip.completedAt&&<div style={St.hintSm}>on {fmt(trip.completedAt)}</div>}
+                </div>
+              </div>
+              <div style={St.hintSm}>This trip is archived and read-only. Restore it to allow editing again.</div>
+              <button style={{...St.smallBtn,marginTop:12}} onClick={()=>{
+                patch({status:"active",completedAt:null}); flash("Trip restored to active");
+              }}><Ic.back style={ic(14)}/> Restore to active</button>
+            </>
+          : <>
+              <div style={St.hintSm}>Mark this trip as completed to move it to the archive. The crew can still view everything, but nothing will be editable.</div>
+              <CompleteTripForm trip={trip} patch={patch} flash={flash}/>
+            </>}
+      </div>
+
       <button style={St.dangerBtn} onClick={deleteTrip}>
         <Ic.trash style={ic(15)}/> Delete trip
       </button>
@@ -1354,9 +1461,26 @@ function TripSettingsTab({trip,me,patch,flash,onBack}){
   );
 }
 
+function CompleteTripForm({trip,patch,flash}){
+  const today=new Date().toISOString().slice(0,10);
+  const defaultDate=trip.end&&trip.end<=today?trip.end:today;
+  const [completedAt,setCompletedAt]=useState(defaultDate);
+  return (
+    <div style={{marginTop:12}}>
+      <Field label="Completion date">
+        <input type="date" style={St.input} value={completedAt} max={today}
+          onChange={e=>setCompletedAt(e.target.value)}/>
+      </Field>
+      <button style={{...St.smallBtn,marginTop:8,background:"rgba(91,191,138,.18)",color:"#5BBF8A",border:"1px solid rgba(91,191,138,.35)"}}
+        onClick={()=>{patch({status:"completed",completedAt}); flash("Trip marked as completed");}}>
+        <Ic.checkCircle style={ic(14)}/> Mark as completed
+      </button>
+    </div>
+  );
+}
 
 /* ---------------- DUES SECTION (overview) ---------------- */
-function DuesSection({trip,me,patch,flash,isAdmin}){
+function DuesSection({trip,me,patch,flash,isAdmin,readOnly}){
   if(!trip.duesEnabled) return null;
   const myMember=(trip.members||[]).find(m=>m.id===me.id);
   if(!myMember) return null;
@@ -1384,7 +1508,7 @@ function DuesSection({trip,me,patch,flash,isAdmin}){
             <Ic.check style={ic(16)}/> Your dues are confirmed paid</div>
           :myMember.duesPending
             ?<div style={{color:"var(--gold)",fontSize:13.5,fontWeight:600}}>⏳ Payment pending confirmation</div>
-            :<button style={St.primaryBtn} onClick={markPaid}><Ic.dollar style={ic(15)}/> Mark dues as paid</button>}
+            :!readOnly&&<button style={St.primaryBtn} onClick={markPaid}><Ic.dollar style={ic(15)}/> Mark dues as paid</button>}
       </div>
       {isAdmin&&(trip.members||[]).some(m=>m.duesPending&&!m.duesPaid)&&(
         <div style={{marginTop:12,padding:"10px 12px",background:"rgba(232,178,60,.08)",border:"1px solid rgba(232,178,60,.25)",borderRadius:10,fontSize:12.5,color:"var(--gold)"}}>
@@ -1396,7 +1520,7 @@ function DuesSection({trip,me,patch,flash,isAdmin}){
 }
 
 /* ---------------- ITINERARY (schedule + map + photos) ---------------- */
-function ItineraryTab({trip,me,patch,flash}){
+function ItineraryTab({trip,me,patch,flash,readOnly}){
   const members=trip.members||[];
   const trails=trip.trails||[];
   const photos=trip.photos||[];
@@ -1483,7 +1607,7 @@ function ItineraryTab({trip,me,patch,flash}){
       {/* ── SCHEDULE ── */}
       <div style={St.listHead}>
         <h2 style={St.h2}>Schedule</h2>
-        <button style={St.smallBtn} onClick={()=>setAddEvt(true)}><Ic.plus style={ic(14)}/> Event</button>
+        {!readOnly&&<button style={St.smallBtn} onClick={()=>setAddEvt(true)}><Ic.plus style={ic(14)}/> Event</button>}
       </div>
       {events.length===0 && <Empty icon={Ic.cal} text="Add activities and events to build your day-by-day itinerary."/>}
       {tripDays.filter(d=>(byDay[d.v]||[]).length>0).map(d=>(
@@ -1500,7 +1624,7 @@ function ItineraryTab({trip,me,patch,flash}){
                   <div style={St.itemTitle}>{e.title}</div>
                   <div style={St.itemMeta}>{e.type}{e.notes?` · ${e.notes}`:""}</div>
                 </div>
-                <button style={St.iconBtn} onClick={()=>delEvent(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+                {!readOnly&&<button style={St.iconBtn} onClick={()=>delEvent(e.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
               </div>
             ))}
           </div>
@@ -1510,10 +1634,10 @@ function ItineraryTab({trip,me,patch,flash}){
       {/* ── MAP ── */}
       <div style={{...St.listHead,marginTop:events.length?20:0}}>
         <h2 style={St.h2}>Map</h2>
-        <div style={{display:"flex",gap:8}}>
+        {!readOnly&&<div style={{display:"flex",gap:8}}>
           <button style={St.smallBtn} onClick={()=>setPick(true)}><Ic.map style={ic(14)}/> Drop pin</button>
           <button style={St.smallBtn} onClick={()=>setOpenTrail(true)}><Ic.plus style={ic(14)}/> Trail</button>
-        </div>
+        </div>}
       </div>
       <div ref={ref} style={{...St.mapBig,marginBottom:10}}/>
       {(trip.campLat&&trip.campLng)&&
@@ -1525,7 +1649,7 @@ function ItineraryTab({trip,me,patch,flash}){
       <div style={{display:"grid",gap:10,marginBottom:24}}>
         {trails.map(t=>(
           <div key={t.id} style={St.itemRow}>
-            <button style={{...St.checkBtn,...(t.done?St.checkOn:{})}} onClick={()=>toggleTrail(t.id)} aria-label="Done">
+            <button style={{...St.checkBtn,...(t.done?St.checkOn:{})}} onClick={()=>!readOnly&&toggleTrail(t.id)} aria-label="Done">
               {t.done&&<Ic.check style={{width:13,height:13,color:"var(--night)"}}/>}
             </button>
             <div style={{flex:1}}>
@@ -1534,7 +1658,7 @@ function ItineraryTab({trip,me,patch,flash}){
             </div>
             {t.lat&&t.lng&&
               <a style={St.navBtn} href={directionsURL(t.lat,t.lng,t.name)} target="_blank" rel="noreferrer" aria-label="Directions"><Ic.nav style={ic(14)}/></a>}
-            <button style={St.iconBtn} onClick={()=>delTrail(t.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>
+            {!readOnly&&<button style={St.iconBtn} onClick={()=>delTrail(t.id)} aria-label="Delete"><Ic.trash style={ic(15)}/></button>}
           </div>
         ))}
       </div>
@@ -1542,11 +1666,11 @@ function ItineraryTab({trip,me,patch,flash}){
       {/* ── PHOTOS ── */}
       <div style={St.listHead}>
         <h2 style={St.h2}>Photos</h2>
-        <label style={{...St.smallBtn,cursor:"pointer"}}>
+        {!readOnly&&<label style={{...St.smallBtn,cursor:"pointer"}}>
           <Ic.img style={ic(14)}/> Add
           <input type="file" accept="image/*" multiple style={{display:"none"}}
             onChange={e=>{addPhotos(e.target.files);e.target.value="";}}/>
-        </label>
+        </label>}
       </div>
       {photos.length===0&&<Empty icon={Ic.img} text="Add photos from the trip to share with your crew."/>}
       {photos.length>0&&(
@@ -1561,7 +1685,7 @@ function ItineraryTab({trip,me,patch,flash}){
       )}
 
       {/* modals */}
-      {addEvt&&<FormSheet title="Add event" onClose={()=>setAddEvt(false)} onSave={addEvent}
+      {addEvt&&!readOnly&&<FormSheet title="Add event" onClose={()=>setAddEvt(false)} onSave={addEvent}
         fields={[
           {k:"title",label:"Event",type:"text",req:true},
           {k:"day",label:"Day",type:"select",opts:tripDays,def:tripDays[0]?.v||""},
@@ -1569,7 +1693,7 @@ function ItineraryTab({trip,me,patch,flash}){
           {k:"type",label:"Type",type:"select",opts:eventTypes.map(t=>({v:t,l:t})),def:"Activity"},
           {k:"notes",label:"Notes (optional)",type:"text"},
         ]}/>}
-      {openTrail&&<FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpenTrail(false);setPreset(null);}} onSave={addTrail}
+      {openTrail&&!readOnly&&<FormSheet title={preset?"Name this pin":"Add trail"} onClose={()=>{setOpenTrail(false);setPreset(null);}} onSave={addTrail}
         initial={preset||{}}
         fields={[
           {k:"name",label:"Trail name",type:"text",req:true},
@@ -1578,7 +1702,7 @@ function ItineraryTab({trip,me,patch,flash}){
           {k:"lat",label:"Latitude",type:"text"},
           {k:"lng",label:"Longitude",type:"text"},
         ]}/>}
-      {pick&&<PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Drop a waypoint"
+      {pick&&!readOnly&&<PinPicker startLat={trip.campLat} startLng={trip.campLng} title="Drop a waypoint"
         onClose={()=>setPick(false)}
         onPick={(la,ln)=>{setPick(false);setPreset({lat:la.toFixed(6),lng:ln.toFixed(6)});setOpenTrail(true);}}/>}
       {viewPhoto&&(
@@ -1587,7 +1711,7 @@ function ItineraryTab({trip,me,patch,flash}){
             <img src={viewPhoto.data} alt="" style={{width:"100%",borderRadius:14,display:"block"}}/>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 2px 0"}}>
               <span style={{fontSize:12,color:"var(--sage)"}}>by {getName(viewPhoto.by)}</span>
-              <button style={St.dangerBtn} onClick={()=>delPhoto(viewPhoto.id)}><Ic.trash style={ic(14)}/> Remove</button>
+              {!readOnly&&<button style={St.dangerBtn} onClick={()=>delPhoto(viewPhoto.id)}><Ic.trash style={ic(14)}/> Remove</button>}
             </div>
             <button style={{position:"absolute",top:8,right:12,background:"rgba(0,0,0,.6)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer"}}
               onClick={()=>setViewPhoto(null)}><Ic.x style={{...ic(18),color:"var(--paper)"}}/></button>
