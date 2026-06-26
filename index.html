@@ -392,6 +392,7 @@ function seedFor(me){
     ],
     trails:[{id:uid(),name:"Bear Rocks Loop",miles:4.2,difficulty:"Moderate",lat:39.0489,lng:-79.3010,done:false}],
     photos:[],
+    extras:[{id:uid(),name:"Coffee",category:"Drink",price:12,assignee:me.id}],
   };
   lwrite(LK.trips,all);
 }
@@ -626,7 +627,7 @@ function Home({trips,me,flash,onOpen,onOpenSettings}){
     await Data.createTrip({
       ownerId:me.id, name:d.name, location:d.location, start:d.start, end:d.end, cover:"",
       campLat:d.campLat?+d.campLat:null, campLng:d.campLng?+d.campLng:null, campLabel:d.campLabel||"",
-      notes:"", memberIds:[me.id], members:[blankMember(me)], meals:[], trails:[], photos:[],
+      notes:"", memberIds:[me.id], members:[blankMember(me)], meals:[], trails:[], photos:[], extras:[],
     });
     flash("Trip created"); setAdding(false);
   };
@@ -1559,7 +1560,9 @@ function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
 function MealsTab({trip,patch,flash,readOnly}){
   const [open,setOpen]=useState(false);
   const [showList,setShowList]=useState(false);
+  const [openExtra,setOpenExtra]=useState(false);
   const meals=trip.meals||[]; const members=trip.members||[];
+  const extras=trip.extras||[];
   const nameOf=mid=>members.find(x=>x.id===mid)?.name||"";
 
   const addMeal=(m)=>{
@@ -1577,6 +1580,14 @@ function MealsTab({trip,patch,flash,readOnly}){
   const toggleItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.map(i=>i.id===itemId?{...i,got:!i.got}:i)}:m)});
   const delItem=(mealId,itemId)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.filter(i=>i.id!==itemId)}:m)});
   const updateItem=(mealId,itemId,fields)=>patch({meals:meals.map(m=>m.id===mealId?{...m,items:m.items.map(i=>i.id===itemId?{...i,...fields}:i)}:m)});
+
+  const addExtra=(e)=>{
+    if(!e.name.trim())return;
+    patch({extras:[...extras,{id:uid(),name:e.name.trim(),category:e.category||"Drink",price:e.price?+e.price:0,assignee:e.assignee||""}]});
+    flash("Extra added"); setOpenExtra(false);
+  };
+  const delExtra=(id)=>patch({extras:extras.filter(e=>e.id!==id)});
+  const updateExtra=(id,fields)=>patch({extras:extras.map(e=>e.id===id?{...e,...fields}:e)});
 
   const allItems=useMemo(()=>{
     const out=[]; meals.forEach(m=>(m.items||[]).forEach(i=>out.push({...i,meal:m.title,mealId:m.id})));
@@ -1606,6 +1617,9 @@ function MealsTab({trip,patch,flash,readOnly}){
         ))}
       </div>
 
+      <ExtrasSection extras={extras} members={members} nameOf={nameOf} readOnly={readOnly}
+        onAdd={()=>setOpenExtra(true)} onDel={delExtra} onUpdate={updateExtra}/>
+
       {open && !readOnly && <FormSheet title="Add meal" onClose={()=>setOpen(false)} onSave={addMeal}
         fields={[
           {k:"title",label:"Meal",type:"text",req:true},
@@ -1614,6 +1628,14 @@ function MealsTab({trip,patch,flash,readOnly}){
           {k:"paidBy",label:"Paid by",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
           {k:"responsible",label:"Cook (who's making this meal)",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
           {k:"forAll",label:"Split cost across whole crew",type:"bool",def:true},
+        ]}/>}
+
+      {openExtra && !readOnly && <FormSheet title="Add extra" onClose={()=>setOpenExtra(false)} onSave={addExtra}
+        fields={[
+          {k:"name",label:"Item name",type:"text",req:true},
+          {k:"category",label:"Category",type:"select",opts:[{v:"Drink",l:"Drink"},{v:"Snack",l:"Snack"}],def:"Drink"},
+          {k:"price",label:"Price ($)",type:"number"},
+          {k:"assignee",label:"Assigned to",type:"select",allowEmpty:true,opts:members.map(x=>({v:x.id,l:x.name}))},
         ]}/>}
 
       {showList && <ShoppingList items={allItems} members={members} onToggle={(mealId,itemId)=>toggleItem(mealId,itemId)} onClose={()=>setShowList(false)}/>}
@@ -1716,6 +1738,68 @@ function ShoppingList({items,members,onToggle,onClose}){
           </div>
         </div>}
     </Modal>
+  );
+}
+
+function ExtrasSection({extras,members,nameOf,readOnly,onAdd,onDel,onUpdate}){
+  const drinks=extras.filter(e=>e.category==="Drink");
+  const snacks=extras.filter(e=>e.category==="Snack");
+
+  if(extras.length===0&&readOnly) return null;
+
+  return (
+    <div style={{marginTop:20}}>
+      <div style={St.listHead}>
+        <h2 style={St.h2}>Extras</h2>
+        {!readOnly&&<button style={St.smallBtn} onClick={onAdd}><Ic.plus style={ic(14)}/> Extra</button>}
+      </div>
+
+      {extras.length===0&&!readOnly&&<Empty icon={Ic.cart} text="Add drinks, snacks, or other items to your shopping list."/>}
+
+      {drinks.length>0&&(
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:12,color:"var(--sage)",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:8}}>Drinks ({drinks.length})</div>
+          <div style={{display:"grid",gap:6}}>
+            {drinks.map(e=>(
+              <div key={e.id} style={{...St.itemRow,justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={St.itemTitle}>{e.name}</div>
+                  <div style={St.itemMeta}>
+                    {e.price?`$${(+e.price).toFixed(2)}`:""}{e.assignee?` · ${nameOf(e.assignee)}`:""}</div>
+                </div>
+                {!readOnly&&(
+                  <div style={{display:"flex",gap:6,marginLeft:8}}>
+                    <button style={St.iconBtn} onClick={()=>onDel(e.id)} aria-label="Delete"><Ic.trash style={ic(13)}/></button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {snacks.length>0&&(
+        <div>
+          <div style={{fontSize:12,color:"var(--sage)",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:8}}>Snacks ({snacks.length})</div>
+          <div style={{display:"grid",gap:6}}>
+            {snacks.map(e=>(
+              <div key={e.id} style={{...St.itemRow,justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={St.itemTitle}>{e.name}</div>
+                  <div style={St.itemMeta}>
+                    {e.price?`$${(+e.price).toFixed(2)}`:""}{e.assignee?` · ${nameOf(e.assignee)}`:""}</div>
+                </div>
+                {!readOnly&&(
+                  <div style={{display:"flex",gap:6,marginLeft:8}}>
+                    <button style={St.iconBtn} onClick={()=>onDel(e.id)} aria-label="Delete"><Ic.trash style={ic(13)}/></button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
