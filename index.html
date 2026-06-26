@@ -758,6 +758,7 @@ function OverviewTab({trip,me,patch,flash,onBack,isAdmin}){
         <Stat icon={Ic.foot} label="Total miles" value={miles.toFixed(1)}/>
         <Stat icon={Ic.food} label="Meals" value={(trip.meals||[]).length}/>
         <Stat icon={Ic.dollar} label="Food cost" value={`$${cost.toFixed(0)}`}/>
+        <Stat icon={Ic.users} label="Crew" value={(trip.members||[]).length}/>
       </div>
 
       <DuesSection trip={trip} me={me} patch={patch} flash={flash} isAdmin={isAdmin}/>
@@ -2006,7 +2007,7 @@ const St={
   bottomTabLabel:{fontSize:10.5,fontWeight:600,letterSpacing:.3},
 
   pane:{},
-  statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14},
+  statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:14},
   statCard:{background:"var(--pine)",border:"1px solid var(--line)",borderRadius:13,padding:"14px 12px",textAlign:"center"},
   statValue:{fontFamily:"'Oswald',sans-serif",fontSize:24,fontWeight:700,margin:"6px 0 2px"},
   statLabel:{fontSize:11,color:"var(--sage)",textTransform:"uppercase",letterSpacing:.5},
