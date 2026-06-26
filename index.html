@@ -41,6 +41,8 @@ a{color:inherit}
 #root{min-height:100vh;min-height:100dvh}
 .spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
 .fade{animation:fade .35s ease}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.center-popup{position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%) scaleY(0);transform-origin:bottom center;opacity:0;transition:transform .22s cubic-bezier(.34,1.56,.64,1),opacity .18s ease;pointer-events:none;z-index:60;display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:170px}
+.center-popup.open{transform:translateX(-50%) scaleY(1);opacity:1;pointer-events:auto}
 </style>
 </head>
 <body>
@@ -752,16 +754,16 @@ function TripCard({trip,me,onOpen,onSettings}){
    ============================================================ */
 function TripShell({trip,me,flash,onBack,initialTab}){
   const [tab,setTab]=useState(initialTab||"plan");
+  const [menuOpen,setMenuOpen]=useState(false);
   const patch=useCallback(fields=>Data.updateTrip(trip.id,fields),[trip.id]);
   const isAdmin=trip.ownerId===me.id;
   const isCompleted=trip.status==="completed";
-  const tabs=[
-    {id:"plan",label:"Overview",icon:Ic.pack},
-    {id:"crew",label:"Crew",icon:Ic.users},
+  const centerItems=[
     {id:"meals",label:"Meals",icon:Ic.food},
     {id:"costs",label:"Costs",icon:Ic.dollar},
+    {id:"packing",label:"Packing List",icon:Ic.pack},
+    {id:"waypoints",label:"Waypoints",icon:Ic.pin},
     {id:"itinerary",label:"Itinerary",icon:Ic.cal},
-    ...(isAdmin?[{id:"settings",label:"Settings",icon:Ic.gear}]:[]),
   ];
   return (
     <div style={St.tripWrap}>
@@ -799,18 +801,41 @@ function TripShell({trip,me,flash,onBack,initialTab}){
           {tab==="meals" && <MealsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="costs" && <CostsTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="itinerary" && <ItineraryTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted}/>}
+          {tab==="packing" && <PackingListTab trip={trip} patch={patch} flash={flash} readOnly={isCompleted}/>}
+          {tab==="waypoints" && <WaypointsTab trip={trip} me={me} patch={patch} flash={flash} readOnly={isCompleted}/>}
           {tab==="settings" && isAdmin && <TripSettingsTab trip={trip} me={me} patch={patch} flash={flash} onBack={onBack}/>}
         </div>
       </div>
 
       <nav style={St.tabBarBottom}>
-        {tabs.map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)}
-            style={{...St.bottomTab,...(tab===t.id?St.bottomTabOn:{})}}>
-            <t.icon style={ic(22)}/>
-            <span style={St.bottomTabLabel}>{t.label}</span>
+        <button onClick={()=>{setTab("plan");setMenuOpen(false);}}
+          style={{...St.bottomTab,...(tab==="plan"?St.bottomTabOn:{})}}>
+          <Ic.tent style={ic(22)}/>
+          <span style={St.bottomTabLabel}>Home</span>
+        </button>
+
+        <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          {menuOpen&&<div onClick={()=>setMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:50}}/>}
+          <div className={`center-popup${menuOpen?" open":""}`}>
+            {centerItems.map(t=>(
+              <button key={t.id} onClick={()=>{setTab(t.id);setMenuOpen(false);}}
+                style={{...St.centerMenuItem,...(tab===t.id?St.centerMenuItemOn:{})}}>
+                <t.icon style={ic(18)}/>
+                <span style={St.bottomTabLabel}>{t.label}</span>
+              </button>
+            ))}
+          </div>
+          <button onClick={()=>setMenuOpen(o=>!o)}
+            style={{...St.centerBtn,...(menuOpen?St.centerBtnOpen:{})}}>
+            <Ic.plus style={{...ic(26),transition:"transform .2s",transform:menuOpen?"rotate(45deg)":"rotate(0deg)"}}/>
           </button>
-        ))}
+        </div>
+
+        <button onClick={()=>{setTab("crew");setMenuOpen(false);}}
+          style={{...St.bottomTab,...(tab==="crew"?St.bottomTabOn:{})}}>
+          <Ic.users style={ic(22)}/>
+          <span style={St.bottomTabLabel}>Crew</span>
+        </button>
       </nav>
     </div>
   );
@@ -1722,6 +1747,32 @@ function ItineraryTab({trip,me,patch,flash,readOnly}){
   );
 }
 
+/* ---------------- PACKING LIST ---------------- */
+function PackingListTab({trip,patch,flash,readOnly}){
+  return (
+    <div style={St.pane}>
+      <div style={{...St.block,textAlign:"center",padding:"40px 20px 36px"}}>
+        <Ic.pack style={{...ic(40),color:"var(--ember2)",margin:"0 auto 14px",display:"block"}}/>
+        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:600,marginBottom:8,letterSpacing:.5}}>Packing List</div>
+        <div style={{color:"var(--sage)",fontSize:13,lineHeight:1.6}}>Gear checklists for the crew — coming soon.</div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- WAYPOINTS ---------------- */
+function WaypointsTab({trip,me,patch,flash,readOnly}){
+  return (
+    <div style={St.pane}>
+      <div style={{...St.block,textAlign:"center",padding:"40px 20px 36px"}}>
+        <Ic.pin style={{...ic(40),color:"var(--ember2)",margin:"0 auto 14px",display:"block"}}/>
+        <div style={{fontFamily:"'Oswald',sans-serif",fontSize:18,fontWeight:600,marginBottom:8,letterSpacing:.5}}>Waypoints</div>
+        <div style={{color:"var(--sage)",fontSize:13,lineHeight:1.6}}>Trails and map waypoints live in the Itinerary tab.</div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- PIN PICKER ---------------- */
 function PinPicker({startLat,startLng,title,onPick,onClose}){
   const ref=useRef(null); const [sel,setSel]=useState(null);
@@ -2132,14 +2183,24 @@ const St={
   heroTitle:{fontFamily:"'Oswald',sans-serif",fontSize:26,fontWeight:700,margin:0,letterSpacing:.5},
   heroLoc:{display:"flex",alignItems:"center",gap:5,opacity:.85,fontSize:13,marginTop:4},
 
-  tabBarBottom:{display:"flex",justifyContent:"space-around",alignItems:"stretch",
+  tabBarBottom:{display:"flex",justifyContent:"space-around",alignItems:"center",
     background:"rgba(15,26,23,0.97)",backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",
     borderTop:"1px solid var(--line)",
-    padding:"6px 6px calc(env(safe-area-inset-bottom) + 6px)",flexShrink:0},
+    padding:"6px 6px calc(env(safe-area-inset-bottom) + 6px)",flexShrink:0,overflow:"visible",position:"relative"},
   bottomTab:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"none",border:"none",
     color:"var(--sage)",cursor:"pointer",padding:"6px 4px",borderRadius:12},
   bottomTabOn:{color:"var(--ember2)"},
   bottomTabLabel:{fontSize:10.5,fontWeight:600,letterSpacing:.3},
+  centerBtn:{width:56,height:56,borderRadius:28,background:"var(--ember)",border:"2px solid rgba(232,104,44,0.25)",
+    color:"var(--paper)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+    boxShadow:"0 4px 18px rgba(232,104,44,0.45),0 2px 6px rgba(0,0,0,0.3)",marginTop:-18,
+    transition:"background .15s,transform .15s,box-shadow .15s",flexShrink:0},
+  centerBtnOpen:{background:"var(--ember2)",transform:"scale(1.06)",boxShadow:"0 6px 22px rgba(242,148,78,0.5),0 2px 6px rgba(0,0,0,0.3)"},
+  centerMenuItem:{display:"flex",flexDirection:"row",alignItems:"center",gap:10,
+    background:"rgba(22,42,36,0.97)",border:"1px solid var(--line)",color:"var(--sage)",cursor:"pointer",
+    padding:"11px 16px",borderRadius:10,fontSize:13,fontWeight:600,whiteSpace:"nowrap",
+    backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)"},
+  centerMenuItemOn:{color:"var(--ember2)",background:"rgba(242,148,78,0.08)"},
 
   pane:{},
   statRow:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:14},
