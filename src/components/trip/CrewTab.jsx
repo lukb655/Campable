@@ -5,7 +5,6 @@ import { St } from '../../styles.js';
 import { ic, uid } from '../../utils.js';
 import { Empty } from '../common/ListHead.jsx';
 import MemberProfileModal from './MemberProfileModal.jsx';
-import GroupChat from './GroupChat.jsx';
 import ShareCard from './ShareCard.jsx';
 
 export default function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
@@ -67,8 +66,6 @@ export default function CrewTab({trip,me,patch,flash,isAdmin,readOnly}){
         fetchedPhoto={fetchedPhotos[selectedMember.id]}
       />}
       {trip.joinCode && (isAdmin||trip.shareCode) && <ShareCard trip={trip} flash={flash} isAdmin={isAdmin} patch={patch}/>}
-
-      <GroupChat trip={trip} me={me} patch={patch}/>
 
       {isAdmin && !readOnly && (
         <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>

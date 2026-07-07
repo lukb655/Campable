@@ -34,7 +34,7 @@ export default function FieldNotesSection({trip,me,isAdmin,patch}){
 
   return (
     <div style={St.block}>
-      <div style={St.blockHead}><span>Field Notes</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
+      <div style={St.blockHead}><span>Live Chat</span><Ic.edit style={{...ic(13),color:"var(--sage)"}}/></div>
       {notes.length===0
         ? <div style={{fontSize:13,color:"var(--sage)",textAlign:"center",padding:"10px 0 6px"}}>No notes yet — be the first to post.</div>
         : <div style={{maxHeight:260,overflowY:"auto",display:"grid",gap:8,marginBottom:10}}>
