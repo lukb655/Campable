@@ -74,7 +74,7 @@ export default function TripShell({trip,me,flash,onBack,initialTab}){
           <span style={St.bottomTabLabel}>Home</span>
         </button>
 
-        <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flexShrink:0,gap:3}}>
           {menuOpen&&<div onClick={()=>setMenuOpen(false)} style={{position:"fixed",inset:0,zIndex:50}}/>}
           <div className={`center-popup${menuOpen?" open":""}`}>
             {centerItems.map(t=>(
@@ -85,10 +85,11 @@ export default function TripShell({trip,me,flash,onBack,initialTab}){
               </button>
             ))}
           </div>
-          <button onClick={()=>setMenuOpen(o=>!o)}
+          <button onClick={()=>setMenuOpen(o=>!o)} aria-label="More options"
             style={{...St.centerBtn,...(menuOpen?St.centerBtnOpen:{})}}>
-            <Ic.plus style={{...ic(26),transition:"transform .2s",transform:menuOpen?"rotate(45deg)":"rotate(0deg)"}}/>
+            {menuOpen ? <Ic.x style={ic(24)}/> : <Ic.menu style={ic(24)}/>}
           </button>
+          <span style={{...St.bottomTabLabel,color:menuOpen?"var(--ember2)":"var(--sage)"}}>More</span>
         </div>
 
         <button onClick={()=>{setTab("crew");setMenuOpen(false);}}
